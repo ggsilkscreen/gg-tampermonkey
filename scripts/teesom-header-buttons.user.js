@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Teesom Buttons v9.23
 // @namespace    http://tampermonkey.net/
-// @version      4.1.1
+// @version      4.2.1
 // @description  Adds SHOP MANUAL, TEESOM MANUAL, TRANSFERS (shows LOGIN NOW when signed out of the transfers site), (on an open order) COMPLETE & PRINT, (on the Job Board) SEND JOBS, (on the Order List) IMPORT CHIPPLY, and (on the Calendar) TIDY CALENDAR buttons to the top center of specific app.teesom.com pages, hides them from printed output if they ever appear anywhere else, and hides them while a popup/modal is genuinely visible so they don't render on top of it.
 // @author       You
 // @match        https://app.teesom.com/saiw/orderlist.asp*
