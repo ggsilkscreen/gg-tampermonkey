@@ -139,7 +139,7 @@
     }
 
     // 3. Build and insert the buttons
-    const shopManualBtn = makeButton('SHOP MANUAL', 'https://sites.google.com/ggsilkscreen.com/ggsilkscreenopsmanual');
+    const shopManualBtn = makeButton('SHOP MANUAL', 'https://script.google.com/a/macros/ggsilkscreen.com/s/AKfycbx57nQv17JSYzmLPATDKs6_sl4X3alW72oTq9jaT2JCqbklq5HmJ3uw8tWwM-cVlIO-aw/exec');
     const teesomManualBtn = makeButton('TEESOM MANUAL', 'https://docs.teesom.com/en/tutorials/tutorial');
     const transfersBtn = makeButton('TRANSFERS', 'https://ggh.nacoteds.com/transfers');
 
