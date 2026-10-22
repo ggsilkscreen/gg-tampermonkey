@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Teesom Buttons v9.23
 // @namespace    http://tampermonkey.net/
-// @version      3.7.1
-// @description  Adds SHOP MANUAL, TEESOM MANUAL, TRANSFERS (shows LOGIN NOW when signed out of the transfers site), (on an open order) COMPLETE & PRINT, (on the Job Board) SEND JOBS, and (on the Order List) IMPORT CHIPPLY buttons to the top center of specific app.teesom.com pages, hides them from printed output if they ever appear anywhere else, and hides them while a popup/modal is genuinely visible so they don't render on top of it.
+// @version      4.1.1
+// @description  Adds SHOP MANUAL, TEESOM MANUAL, TRANSFERS (shows LOGIN NOW when signed out of the transfers site), (on an open order) COMPLETE & PRINT, (on the Job Board) SEND JOBS, (on the Order List) IMPORT CHIPPLY, and (on the Calendar) TIDY CALENDAR buttons to the top center of specific app.teesom.com pages, hides them from printed output if they ever appear anywhere else, and hides them while a popup/modal is genuinely visible so they don't render on top of it.
 // @author       You
 // @match        https://app.teesom.com/saiw/orderlist.asp*
 // @match        https://app.teesom.com/saiw/jobboard.asp*
@@ -1118,6 +1118,347 @@
   importBtn.onmouseover = () => importBtn.style.backgroundColor = '#062f54';
   importBtn.onmouseout = () => importBtn.style.backgroundColor = '#073763';
   bar.appendChild(importBtn);
+    })();
+    }
+
+    // ================================================================
+    // TIDY CALENDAR - Calendar page only. Moves every job sitting on a
+    // past date onto today, then color-sorts every visible day, then
+    // reloads to verify what the server saved (redoing anything still
+    // wrong, up to 3 passes). Works by simulating the calendar's own
+    // drag-and-drop, the same way you'd drag the jobs by hand.
+    // ================================================================
+    if (/\/saiw\/calendar\.asp/i.test(location.pathname)) {
+    (function () {
+        // ---------- SETTINGS ----------
+        // Color rank: lower = further left. Colors not listed keep their order, at the end.
+        const CAL_RANK = {
+            '#f85db8': 1, '#a30078': 2, '#640240': 3, '#4a4a4a': 4, '#808080': 5,
+            '#eb6a00': 7, '#1a891c': 8, '#0b513c': 10, '#074633': 11, '#1a897c': 12,
+            '#639334': 13, '#d00101': 17
+        };
+        const CAL_FAST_MODE = true;       // true = save the new order straight to Teesom (seconds); false = drag every job (minutes)
+        const CAL_AUTO_RUN_DAILY = false; // true = run by itself the first time the calendar opens each day
+        const CAL_MOVE_DELAY = 3000;      // ms between cross-day moves (lets the server save)
+        const CAL_SORT_DELAY = 1600;      // ms between same-day reorders
+        const CAL_MAX_SORT_ITERS = 80;    // per day, per pass
+        const CAL_MAX_VERIFY = 3;         // reload + re-check rounds
+        const CAL_VERIFY_KEY = 'tm-cal-tidy-verify-pass';
+        const CAL_LASTRUN_KEY = 'tm-cal-tidy-last-run';
+        // ------------------------------
+
+        const W = unsafeWindow;
+        let running = false;
+
+        // While tidying ONLY: let each day cell grow taller to fit all its jobs so every
+        // job can be "dropped" on. Width stays locked (overflow-x hidden + min-width 0)
+        // so long job names still cut off instead of pushing columns off screen.
+        // Removed again as soon as the run finishes, so the calendar looks normal.
+        function addExpandCss() {
+            if (document.getElementById('__ross_calendar_expand')) return;
+            const st = document.createElement('style');
+            st.id = '__ross_calendar_expand';
+            st.textContent = '.calendarday.dragcontainer { height:auto !important; max-height:none !important; ' +
+                'overflow-x:hidden !important; overflow-y:visible !important; min-width:0 !important; }';
+            document.head.appendChild(st);
+        }
+        function removeExpandCss() {
+            const st = document.getElementById('__ross_calendar_expand');
+            if (st) st.remove();
+        }
+
+        function calToday() {
+            const d = new Date();
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
+        const itemsOf = (day) => Array.from(day.querySelectorAll(':scope > .calendardayitem'));
+        const numOf = (el) => ((el.querySelector('.td-detail') || {}).textContent || el.id).trim();
+        function rankOf(el) {
+            const m = (el.getAttribute('style') || '').match(/background-color:\s*(#[0-9a-fA-F]{6})/);
+            return (m && CAL_RANK[m[1].toLowerCase()]) || 999;
+        }
+
+        // Simulated drag. fracY ~0.2 = drop just before the target job, ~0.8 = just after.
+        function simulateDrag(sourceEl, targetEl, fracY) {
+            targetEl.scrollIntoView({ block: 'center' });
+            const s = sourceEl.getBoundingClientRect();
+            const t = targetEl.getBoundingClientRect();
+            const sx = s.left + s.width / 2, sy = s.top + s.height / 2;
+            const tx = t.left + t.width / 2, ty = t.top + t.height * fracY;
+            const dt = new W.DataTransfer();
+            const fire = (type, el, x, y) => {
+                const ev = new W.DragEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: dt });
+                el.dispatchEvent(ev);
+                return ev;
+            };
+            fire('dragstart', sourceEl, sx, sy);
+            const hit = document.elementFromPoint(tx, ty);
+            const overEl = (hit && (hit.closest('.calendardayitem') || hit.closest('.calendarday.dragcontainer'))) || targetEl;
+            fire('dragenter', overEl, tx, ty);
+            fire('dragover', overEl, tx, ty);
+            fire('dragover', overEl, tx, ty);
+            fire('drop', overEl, tx, ty);
+            fire('dragend', sourceEl, tx, ty);
+        }
+
+        // ---- progress panel (bottom-left, only shows while running / after a run) ----
+        let panel, logEl;
+        function calLog(msg) {
+            console.log('[Tidy Calendar]', msg);
+            if (!panel) {
+                panel = document.createElement('div');
+                panel.id = 'tm-cal-tidy-panel';
+                panel.className = 'DoNotPrint';
+                panel.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:999999;background:#fff;color:#222;' +
+                    'border:1px solid #bbb;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.25);font:12px/1.4 Arial,sans-serif;' +
+                    'width:300px;padding:10px;';
+                panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+                    '<b>Tidy Calendar</b><span id="tm-cal-tidy-x" style="cursor:pointer;padding:0 4px" title="Close">✕</span></div>' +
+                    '<div id="tm-cal-tidy-log" style="max-height:180px;overflow:auto;white-space:pre-wrap;font:11px/1.35 Consolas,monospace"></div>';
+                document.body.appendChild(panel);
+                logEl = panel.querySelector('#tm-cal-tidy-log');
+                panel.querySelector('#tm-cal-tidy-x').onclick = () => { if (!running) { panel.remove(); panel = null; } };
+            }
+            logEl.textContent += msg + '\n';
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        // ---- FAST MODE: save straight to Teesom, no dragging ----
+        // Sends the exact same save request the calendar itself sends at the end of a
+        // drag (ajxaction=updatecalendaritemschedule, "position" = slot to drop into,
+        // counting the day's header as slot 0, "adjustment" -0.1 = drop in front of
+        // whatever's in that slot). Goes through the page's own jQuery like IMPORT CHIPPLY.
+        // Only used on the first pass; the reload check afterwards falls back to
+        // dragging for anything that didn't stick.
+        function directSave(el, dateFrom, dateTo, position, adjustment) {
+            const body = new URLSearchParams({
+                ajxaction: 'updatecalendaritemschedule', dbid: el.getAttribute('dbid'),
+                dateto: dateTo, datefrom: dateFrom, type: el.getAttribute('tpe'),
+                adjustment: String(adjustment), position: String(position)
+            }).toString();
+            return new Promise((resolve) => {
+                W.jQuery.ajax({ url: 'adm_getdata.asp', type: 'POST', dataType: 'text', data: body,
+                    success: () => resolve(true), error: (x) => { calLog('  save failed (HTTP ' + x.status + ')'); resolve(false); } });
+            });
+        }
+
+        async function fastMovePastJobs(today) {
+            const todayCell = document.getElementById('d_' + today);
+            if (!todayCell) return { moved: 0, ok: true };
+            const pastCells = Array.from(document.querySelectorAll('.calendarday.dragcontainer'))
+                .filter((c) => c.id.slice(2) < today && itemsOf(c).length);
+            let moved = 0;
+            for (const cell of pastCells) {
+                const dt = cell.id.slice(2);
+                calLog('Fast-moving ' + itemsOf(cell).length + ' job(s) from ' + dt + '…');
+                for (const el of itemsOf(cell)) {
+                    const n = itemsOf(todayCell).length;
+                    // drop after today's last job (slot n+1), or into an empty day (slot 1, no adjustment)
+                    if (!(await directSave(el, dt, today, n + 1, n ? -0.1 : 0))) return { moved, ok: false };
+                    todayCell.appendChild(el);   // mirror it on screen so the next slot number is right
+                    moved++;
+                    await sleep(150);
+                }
+            }
+            return { moved, ok: true };
+        }
+
+        async function fastSortDay(day) {
+            const dt = day.id.slice(2);
+            const target = itemsOf(day).map((el, i) => ({ n: numOf(el), r: rankOf(el), i }))
+                .sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.n);
+            let saves = 0;
+            // Front to back: put the right job into slot k, in front of whatever's there now.
+            for (let k = 0; k < target.length; k++) {
+                const cur = itemsOf(day);
+                if (numOf(cur[k]) === target[k]) continue;
+                const el = cur.find((e) => numOf(e) === target[k]);
+                const slot = Array.prototype.indexOf.call(day.children, cur[k]);
+                if (!(await directSave(el, dt, dt, slot, -0.1))) return false;
+                day.insertBefore(el, cur[k]);
+                saves++;
+                await sleep(150);
+            }
+            calLog('  ' + dt + ': ' + saves + ' save(s)');
+            return true;
+        }
+
+        // ---- Step 1: move past-dated jobs onto today ----
+        async function movePastJobs(today) {
+            const todayCell = document.getElementById('d_' + today);
+            if (!todayCell) { calLog('Today (' + today + ') is not on this calendar view - skipping moves.'); return 0; }
+            const pastCells = Array.from(document.querySelectorAll('.calendarday.dragcontainer'))
+                .filter((c) => c.id.slice(2) < today && itemsOf(c).length);
+            let moved = 0;
+            for (const cell of pastCells) {
+                const dt = cell.id.slice(2);
+                calLog('Moving ' + itemsOf(cell).length + ' job(s) from ' + dt + '…');
+                let stuck = 0;
+                while (itemsOf(cell).length && stuck < 3) {
+                    const before = itemsOf(cell).length;
+                    const tItems = itemsOf(todayCell);
+                    const target = tItems.length ? tItems[tItems.length - 1] : todayCell;
+                    simulateDrag(itemsOf(cell)[0], target, 0.8);
+                    await sleep(CAL_MOVE_DELAY);
+                    if (itemsOf(cell).length < before) { moved++; stuck = 0; } else { stuck++; }
+                }
+                if (itemsOf(cell).length) calLog('  ⚠ ' + itemsOf(cell).length + " job(s) wouldn't move from " + dt);
+            }
+            return moved;
+        }
+
+        // ---- Step 2: color-sort each day ----
+        function unsortedDays() {
+            return Array.from(document.querySelectorAll('.calendarday.dragcontainer:not(.calendardayvoid)')).filter((day) => {
+                const r = itemsOf(day).map(rankOf);
+                return r.some((v, i) => i > 0 && v < r[i - 1]);
+            });
+        }
+        // Plans the fewest drags needed: finds the biggest group of jobs that are
+        // already in the right order relative to each other and leaves them alone,
+        // then drops each remaining job straight into its final slot (one drag each).
+        // Works back-to-front so the job it drops in front of is always already final.
+        function planMoves(nums, target) {
+            const pos = {};
+            target.forEach((n, i) => { pos[n] = i; });
+            const t = nums.map((n) => pos[n]);              // each job's final slot, in current order
+            const last = target.length - 1;
+            const endAt = t.indexOf(last);                  // keep the final job fixed so every move has a job to drop in front of
+            // longest run (by final slot) that's already in order and ends at the final job
+            const len = new Array(t.length).fill(1), prev = new Array(t.length).fill(-1);
+            for (let i = 0; i <= endAt; i++) {
+                for (let j = 0; j < i; j++) {
+                    if (t[j] < t[i] && len[j] + 1 > len[i]) { len[i] = len[j] + 1; prev[i] = j; }
+                }
+            }
+            const keep = new Set();
+            for (let k = endAt; k !== -1; k = prev[k]) keep.add(nums[k]);
+            const moves = [];
+            for (let k = last - 1; k >= 0; k--) {
+                if (!keep.has(target[k])) moves.push({ job: target[k], before: target[k + 1] });
+            }
+            return moves;
+        }
+
+        async function sortDay(day) {
+            const dt = day.id.slice(2);
+            const target = itemsOf(day).map((el, i) => ({ n: numOf(el), r: rankOf(el), i }))
+                .sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.n);
+
+            // 1) Planned pass: one drag per job that's out of place.
+            const byNum = (n) => itemsOf(day).find((el) => numOf(el) === n);
+            const moves = planMoves(itemsOf(day).map(numOf), target);
+            calLog('  ' + dt + ': ' + moves.length + ' job(s) to move (of ' + target.length + ')');
+            for (const m of moves) {
+                for (let tryNo = 0; tryNo < 3; tryNo++) {
+                    const src = byNum(m.job), anchor = byNum(m.before);
+                    if (!src || !anchor) break;
+                    if (src.nextElementSibling === anchor) break;   // already sitting right in front of it
+                    simulateDrag(src, anchor, 0.2);
+                    await sleep(CAL_SORT_DELAY);
+                }
+            }
+            if (JSON.stringify(itemsOf(day).map(numOf)) === JSON.stringify(target)) return true;
+
+            // 2) Fallback: old one-slot-at-a-time method for anything the planned pass missed.
+            calLog('  ' + dt + ': finishing with step-by-step pass');
+            for (let iter = 0; iter < CAL_MAX_SORT_ITERS; iter++) {
+                const cur = itemsOf(day);
+                const nums = cur.map(numOf);
+                if (JSON.stringify(nums) === JSON.stringify(target)) return true;
+                let i = 0;
+                while (i < target.length - 1 && nums[i] === target[i]) i++;
+                const wantIdx = nums.indexOf(target[i]);
+                if (wantIdx === -1) { calLog('  ⚠ ' + dt + ': job ' + target[i] + ' disappeared'); return false; }
+                simulateDrag(cur[wantIdx], cur[i], 0.2);
+                await sleep(CAL_SORT_DELAY);
+            }
+            return false;
+        }
+
+        // ---- Main ----
+        async function runCalendarTidy(pass) {
+            if (running) return;
+            running = true;
+            tidyBtn.disabled = true;
+            tidyBtn.style.opacity = '.6';
+            tidyBtn.textContent = 'TIDYING…';
+            addExpandCss();
+            await sleep(300);
+            const today = calToday();
+            calLog(pass ? 'Verify pass ' + pass + ' after reload…' : 'Started for ' + today);
+            try {
+                let moved = 0, days = [];
+                let fast = CAL_FAST_MODE && pass === 0;
+                if (fast) {
+                    calLog('Fast mode: saving straight to Teesom…');
+                    const r = await fastMovePastJobs(today);
+                    moved = r.moved;
+                    if (r.ok) {
+                        days = unsortedDays();
+                        if (days.length) calLog('Sorting ' + days.length + ' day(s): ' + days.map((d) => d.id.slice(2)).join(', '));
+                        for (const day of days) { if (!(await fastSortDay(day))) { fast = false; break; } }
+                    } else fast = false;
+                    if (!fast) calLog('Fast mode failed - switching to dragging.');
+                    else if (moved || days.length) calLog('Fast saves sent. Reloading to check they stuck…');
+                }
+                if (!fast) {
+                    const m2 = await movePastJobs(today);
+                    moved += m2;
+                    if (m2) calLog('Moved ' + m2 + ' job(s) onto ' + today + '.');
+                    days = unsortedDays();
+                    if (days.length) calLog('Sorting ' + days.length + ' day(s): ' + days.map((d) => d.id.slice(2)).join(', '));
+                    for (const day of days) {
+                        const ok = await sortDay(day);
+                        calLog('  ' + day.id.slice(2) + ': ' + (ok ? 'sorted' : 'needs another pass'));
+                    }
+                }
+                GM_setValue(CAL_LASTRUN_KEY, today);
+
+                if (moved === 0 && days.length === 0) {
+                    try { sessionStorage.removeItem(CAL_VERIFY_KEY); } catch (e) { /* ignore */ }
+                    calLog('✔ Clean: nothing on past dates, every day color-sorted.');
+                    toast('Calendar is tidy.');
+                } else if (pass + 1 > CAL_MAX_VERIFY) {
+                    try { sessionStorage.removeItem(CAL_VERIFY_KEY); } catch (e) { /* ignore */ }
+                    calLog('⚠ Still not clean after ' + CAL_MAX_VERIFY + ' checks - look it over by hand.');
+                    toast('Tidy Calendar: some days still need a look.', true);
+                } else {
+                    calLog('Reloading to check what saved…');
+                    try { sessionStorage.setItem(CAL_VERIFY_KEY, String(pass + 1)); } catch (e) { /* ignore */ }
+                    await sleep(1500);
+                    location.reload();
+                    return;
+                }
+            } catch (err) {
+                console.error('[Tidy Calendar]', err);
+                calLog('STOPPED: ' + err.message);
+                toast('Tidy Calendar stopped: ' + err.message, true);
+            }
+            removeExpandCss();
+            running = false;
+            tidyBtn.disabled = false;
+            tidyBtn.style.opacity = '1';
+            tidyBtn.textContent = 'TIDY CALENDAR';
+        }
+
+        const tidyBtn = makeActionButton('TIDY CALENDAR', () => runCalendarTidy(0));
+        tidyBtn.title = 'Move every job on a past date onto today, then sort every day by color';
+        tidyBtn.style.backgroundColor = '#6a1b9a';
+        tidyBtn.style.border = '1px solid #4a148c';
+        tidyBtn.onmouseover = () => tidyBtn.style.backgroundColor = '#4a148c';
+        tidyBtn.onmouseout = () => tidyBtn.style.backgroundColor = '#6a1b9a';
+        bar.appendChild(tidyBtn);
+
+        // Continue a verify pass after the reload, or auto-run once a day if turned on.
+        // Waits a moment for the calendar to finish drawing first.
+        setTimeout(() => {
+            if (!document.querySelector('.calendarday.dragcontainer')) return;
+            let pass = 0;
+            try { pass = parseInt(sessionStorage.getItem(CAL_VERIFY_KEY) || '0', 10) || 0; } catch (e) { /* ignore */ }
+            if (pass > 0) runCalendarTidy(pass);
+            else if (CAL_AUTO_RUN_DAILY && GM_getValue(CAL_LASTRUN_KEY, '') !== calToday()) runCalendarTidy(0);
+        }, 2500);
     })();
     }
 
