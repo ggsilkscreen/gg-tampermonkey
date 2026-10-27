@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Teesom Transfer Stock Lookup V9.23
+// @name         Teesom Transfer Stock Lookup 10.1
 // @namespace    http://tampermonkey.net/
-// @version      3.0.1
+// @version      3.5.1
 // @description  For Heat Press line items that have their own design number link (HTP-...), looks up that design on ggh.nacoteds.com/transfers/find/<design> and shows Total/In Stock/Reserved boxes color-coded by whether Total covers the needed quantity. Companion lines (Patch Cost, Setup, etc.) with no design link are skipped. Fallbacks for logged-out, no-transfer (404) and lookup errors.
 // @author       You
 // @match        https://app.teesom.com/saiw/orderentry.asp*
@@ -147,15 +147,20 @@
         const qty = qtyBox ? parseQty(qtyBox.textContent) : null;
         const artId = row.querySelector('a.btndupadmineditart')?.getAttribute('dbid') || null;
 
+        // Print location = the placement dropdown label on the row (e.g. "Breast - Left")
+        const printLocation = text('.dropdown-toggle.cp') || null;
+
         return {
             artId: artId,
             payload: {
                 customer_name: customerName,
+                account_number: customerAccount,
                 artwork_name: designNumber,
                 // decoration_process defaults by design number prefix; production_unit_type
                 // is derived from it in the popup (not independently editable).
                 decoration_process: defaultDecorationProcess(designNumber),
                 production_unit_count: DEFAULT_PRODUCTION_UNIT_COUNT,
+                print_location: printLocation, // e.g. "Breast - Left"
                 description: text('p.lbllinedescription') || null // e.g. "Rope Patch Hat"
                 // Other optional fields (artwork_size, artwork_colors, setup_for,
                 // designer) come from the art record or are entered by hand.
@@ -163,7 +168,7 @@
             imageUrl: imageUrl, // sent as JSON 'image_url' - a link, not a file upload
             // rowQty is the order line's actual quantity, shown for reference only -
             // production_unit_count defaults to 3 regardless (see DEFAULT_PRODUCTION_UNIT_COUNT).
-            meta: { customerAccount, processLabel, placement: text('.dropdown-toggle.cp'), rowQty: qty }
+            meta: { customerAccount, processLabel, placement: printLocation, rowQty: qty }
         };
     }
 
@@ -192,6 +197,8 @@
             }
             box.textContent = label;
             delete box.dataset.busy;
+            scraped.marker = marker;
+            scraped.designNumber = designNumber;
             openCreateModal(scraped);
         });
         return box;
@@ -222,6 +229,26 @@
         return { art, colors, images, stages };
     }
 
+    // Fallback only: if, for some reason, Art/Load didn't give us a size
+    // (see applyArtDetails below - that's the normal path and needs no
+    // panel to be open), and the art-v2 slideout happens to already be open
+    // on the page, read its live Measurements spec row directly
+    // (e.g. <div class="spec-label">Measurements</div> next to
+    // <div class="spec-value">3.5 x 3 in</div>), inside a block titled
+    // "Actual" or "Estimated". Prefers "Actual".
+    function readArtPanelMeasurements() {
+        const blocks = Array.from(document.querySelectorAll('.art-v2-spec-block'));
+        function findIn(titleWanted) {
+            const block = blocks.find(b => (b.querySelector('.art-v2-spec-block-title')?.textContent || '').trim().toLowerCase() === titleWanted);
+            if (!block) return null;
+            const item = Array.from(block.querySelectorAll('.jcw-slideout-spec-item'))
+                .find(it => (it.querySelector('.spec-label')?.textContent || '').trim().toLowerCase() === 'measurements');
+            const v = (item?.querySelector('.spec-value')?.textContent || '').trim();
+            return (v && v !== '—' && v !== '-') ? v : null;
+        }
+        return findIn('actual') || findIn('estimated');
+    }
+
     function applyArtDetails(scraped, d) {
         if (!d) return;
         const art = d.art || {};
@@ -233,11 +260,25 @@
             : [];
         scraped.designerOptions = names.length ? names : DESIGNER_FALLBACK;
 
-        // Size: measurements, else actual size, else height x width when set.
+        // Size: Art/Load returns both an "Estimated" measurements string and
+        // an "Actual" one (actualsize), matching the two spec blocks shown in
+        // the art-v2 panel. useactualspeconreorder is Teesom's own flag for
+        // which one should be trusted going forward, so honor it; otherwise
+        // prefer the estimated measurements, then actual, then height x width.
         const w = parseFloat(art.width), h = parseFloat(art.height);
-        const size = (art.measurements || '').trim() || (art.actualsize || '').trim() ||
-            ((w > 0 || h > 0) ? (h + ' x ' + w) : '');
+        const measurements = (art.measurements || '').trim();
+        const actualSize = (art.actualsize || '').trim();
+        const useActual = (art.useactualspeconreorder || '').trim().toLowerCase() === 'y';
+        const size = (useActual && actualSize) ? actualSize :
+            (measurements || actualSize || ((w > 0 || h > 0) ? (h + ' x ' + w) : ''));
         if (size) scraped.payload.artwork_size = size;
+
+        // Last resort only: Art/Load gave us nothing, but the art-v2 slideout
+        // happens to already be open on the page - read its live value.
+        if (!scraped.payload.artwork_size) {
+            const domSize = readArtPanelMeasurements();
+            if (domSize) scraped.payload.artwork_size = domSize;
+        }
 
         // Colors: shape not fully known, so accept strings or objects defensively.
         if (Array.isArray(d.colors) && d.colors.length) {
@@ -265,9 +306,11 @@
     // Field definitions mirror the endpoint's validation rules.
     const CREATE_FIELDS = [
         { key: 'artwork_name', label: 'Artwork name *', type: 'text', max: 255 },
-        { key: 'customer_name', label: 'Customer name *', type: 'text', max: 255, hint: 'account' },
+        { key: 'customer_name', label: 'Customer name *', type: 'text', max: 255 },
+        { key: 'account_number', label: 'Account number', type: 'text', max: 255 },
         { key: 'decoration_process', label: 'Decoration Process *', type: 'decoration-process' },
-        { key: 'production_unit_count', label: 'Production unit count * (>= 1)', type: 'number' },
+        { key: 'production_unit_count', label: 'Production unit count * (0 = artwork exists, none in stock)', type: 'number' },
+        { key: 'print_location', label: 'Print location', type: 'text', max: 255 },
         { key: 'artwork_size', label: 'Artwork size', type: 'text', max: 255 },
         { key: 'artwork_colors', label: 'Artwork colors (comma separated)', type: 'text' },
         { key: 'setup_for', label: 'Setup for', type: 'select', options: ['', 'Light', 'Dark'] },
@@ -339,7 +382,7 @@
                 DECORATION_PROCESS_OPTIONS.forEach(o => { const op = document.createElement('option'); op.value = o.label; op.textContent = o.label; inp.appendChild(op); });
             } else {
                 inp = document.createElement('input'); inp.type = f.type;
-                if (f.type === 'number') inp.min = '1';
+                if (f.type === 'number') inp.min = '0';
             }
             if (f.max && f.type !== 'select' && f.type !== 'decoration-process') inp.maxLength = f.max;
             inp.style.cssText = 'width:100%;box-sizing:border-box;padding:5px;font-size:13px;border:1px solid #bbb;border-radius:3px;';
@@ -349,13 +392,6 @@
             inp.value = (v === null || v === undefined) ? '' : v;
             inputs[f.key] = inp;
             wrap.appendChild(inp);
-
-            if (f.hint === 'account') {
-                const n = document.createElement('div');
-                n.textContent = 'Teesom account number: ' + (scraped.meta.customerAccount || '(not found)');
-                n.style.cssText = 'font-size:11px;color:#666;margin-top:2px;';
-                wrap.appendChild(n);
-            }
 
             // Decoration Process drives Production Unit Type. The unit field is
             // shown read-only right under it, not independently editable.
@@ -419,83 +455,19 @@
         cancel.addEventListener('click', () => overlay.remove());
         overlay.addEventListener('mousedown', e => { if (e.target === overlay) overlay.remove(); });
         send.addEventListener('click', function() {
+            if (send.disabled) return;
             const data = collect();
             const missing = REQUIRED_KEYS.filter(k => data[k] === undefined || (typeof data[k] === 'number' && isNaN(data[k])));
             if (missing.length) { msg.style.color = '#b71c1c'; msg.textContent = 'Missing required: ' + missing.join(', '); return; }
-            if (data.production_unit_count < 1) { msg.textContent = 'Production unit count must be at least 1.'; return; }
-            console.log('[Stock Lookup] Create New confirmed payload:', data, 'image:', scraped.imageUrl);
-            showPayloadPreview(panel, overlay, scraped, data);
-        });
+            if (data.production_unit_count < 0) { msg.style.color = '#b71c1c'; msg.textContent = 'Production unit count cannot be negative.'; return; }
+            if (!CREATE_ENDPOINT) { msg.style.color = '#b71c1c'; msg.textContent = 'No endpoint configured.'; return; }
+            console.log('[Stock Lookup] Create New sending payload:', data, 'image:', scraped.imageUrl);
 
-        document.body.appendChild(overlay);
-    }
-
-    // Second popup screen: shows exactly what would be sent, as JSON text.
-    function showPayloadPreview(panel, overlay, scraped, data) {
-        panel.textContent = '';
-
-        const h = document.createElement('div');
-        h.textContent = 'Payload Preview';
-        h.style.cssText = 'font-size:18px;font-weight:bold;margin-bottom:4px;';
-        panel.appendChild(h);
-        const sub = document.createElement('div');
-        sub.textContent = CREATE_ENDPOINT
-            ? 'This is what will be sent. Nothing has been sent yet.'
-            : 'This is what would be sent. Nothing has been sent - no endpoint is configured yet.';
-        sub.style.cssText = 'font-size:12px;color:#666;margin-bottom:10px;';
-        panel.appendChild(sub);
-
-        const preview = {
-            name: 'artwork_creation',
-            endpoint: CREATE_ENDPOINT || '(not set)',
-            method: 'POST',
-            headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer ***' },
-            body: data,
-            scraped_from_teesom: scraped.meta
-        };
-        const ta = document.createElement('textarea');
-        ta.value = JSON.stringify(preview, null, 2);
-        ta.readOnly = true;
-        ta.spellcheck = false;
-        ta.style.cssText = 'width:100%;box-sizing:border-box;height:340px;font-family:Consolas,monospace;font-size:12px;padding:8px;border:1px solid #bbb;border-radius:3px;background:#f7f7f7;resize:vertical;';
-        panel.appendChild(ta);
-
-        const msg = document.createElement('div');
-        msg.style.cssText = 'font-size:12px;margin:8px 0;min-height:16px;color:#2e7d32;';
-        panel.appendChild(msg);
-
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;';
-        function mkBtn(label, style) {
-            const b = document.createElement('button');
-            b.textContent = label;
-            b.style.cssText = 'padding:7px 14px;border-radius:3px;cursor:pointer;' + style;
-            return b;
-        }
-        const back = mkBtn('Back to Edit', 'border:1px solid #bbb;background:#f5f5f5;');
-        const copy = mkBtn('Copy JSON', 'border:1px solid #bbb;background:#f5f5f5;');
-        const close = mkBtn('Close', 'border:1px solid #bbb;background:#f5f5f5;');
-        const confirm = mkBtn(CREATE_ENDPOINT ? 'Confirm & Send' : 'Confirm & Send (endpoint not set)', 'border:0;background:#ad1457;color:#fff;');
-        if (!CREATE_ENDPOINT) { confirm.disabled = true; confirm.style.opacity = '.5'; confirm.style.cursor = 'not-allowed'; }
-        row.appendChild(back); row.appendChild(copy); row.appendChild(close); row.appendChild(confirm);
-        panel.appendChild(row);
-
-        back.addEventListener('click', function() {
-            const payload = Object.assign({}, data); // includes decoration_process / production_unit_type derived in the form
-            overlay.remove();
-            openCreateModal({ payload: payload, imageUrl: scraped.imageUrl, images: scraped.images, designerOptions: scraped.designerOptions, meta: scraped.meta });
-        });
-        copy.addEventListener('click', function() {
-            try { GM_setClipboard(ta.value); msg.textContent = 'Copied to clipboard.'; }
-            catch (e) { ta.select(); msg.textContent = 'Select-all done - press Ctrl+C.'; }
-        });
-        close.addEventListener('click', () => overlay.remove());
-        confirm.addEventListener('click', function() {
-            if (!CREATE_ENDPOINT || confirm.disabled) return;
-            confirm.disabled = true;
-            confirm.style.opacity = '.6';
-            const prevLabel = confirm.textContent;
-            confirm.textContent = 'Sending...';
+            send.disabled = true;
+            cancel.disabled = true;
+            send.style.opacity = '.6';
+            const prevLabel = send.textContent;
+            send.textContent = 'Sending...';
             msg.style.color = '#666';
             msg.textContent = 'Sending to ' + CREATE_ENDPOINT + ' ...';
 
@@ -509,35 +481,42 @@
                 },
                 data: JSON.stringify(data),
                 onload: function(response) {
-                    confirm.disabled = false;
-                    confirm.style.opacity = '1';
-                    confirm.textContent = prevLabel;
                     console.log('[Stock Lookup] Create New response:', response.status, response.responseText);
                     if (response.status >= 200 && response.status < 300) {
-                        msg.style.color = '#2e7d32';
-                        msg.textContent = 'Sent successfully (HTTP ' + response.status + '). See console for the full response.';
-                    } else if (response.status === 401 || response.status === 403) {
-                        msg.style.color = '#b71c1c';
+                        overlay.remove();
+                        if (scraped.marker && scraped.designNumber) {
+                            refreshRowStock(scraped.marker, scraped.designNumber);
+                        }
+                        return;
+                    }
+                    send.disabled = false;
+                    cancel.disabled = false;
+                    send.style.opacity = '1';
+                    send.textContent = prevLabel;
+                    msg.style.color = '#b71c1c';
+                    if (response.status === 401 || response.status === 403) {
                         msg.textContent = 'Not authorized (HTTP ' + response.status + '). Check the API token.';
                     } else if (response.status === 422 || response.status === 400) {
-                        msg.style.color = '#b71c1c';
                         msg.textContent = 'Rejected (HTTP ' + response.status + '): ' + response.responseText.slice(0, 400);
                     } else {
-                        msg.style.color = '#b71c1c';
                         msg.textContent = 'Unexpected response (HTTP ' + response.status + ') - see console.';
                     }
                 },
                 onerror: function(err) {
-                    confirm.disabled = false;
-                    confirm.style.opacity = '1';
-                    confirm.textContent = prevLabel;
                     console.error('[Stock Lookup] Create New request failed:', err);
+                    send.disabled = false;
+                    cancel.disabled = false;
+                    send.style.opacity = '1';
+                    send.textContent = prevLabel;
                     msg.style.color = '#b71c1c';
                     msg.textContent = 'Request failed - see console (this may be a CORS/@connect issue).';
                 }
             });
         });
+
+        document.body.appendChild(overlay);
     }
+
 
     const COLORS = {
         strongGreen: { bg: '#2e7d32', fg: '#ffffff' },
@@ -620,6 +599,36 @@
         return finalUrl.includes('login') || finalUrl.includes('signin') || finalUrl.includes('sign-in');
     }
 
+    // ggh.nacoteds.com renders Total/Available/Reserved as three
+    // ".c-transfer-quantity__card" boxes, each with a ".c-transfer-quantity__label"
+    // ("Total" / "Available" / "Reserved") and a ".c-transfer-quantity__value".
+    // The *color class* on the value (text-success / text-warning / text-secondary)
+    // depends on state, not on which field it is - e.g. for a brand new transfer
+    // that hasn't been counted yet, Total shows "Not counted" and Available shows
+    // "—", and BOTH use text-secondary (no text-success at all until it's counted).
+    // So we match by label text, not by color, and that works in every state.
+    function findQtyCardValue(doc, labelWanted) {
+        const cards = doc.querySelectorAll('.c-transfer-quantity__card');
+        for (const card of cards) {
+            const label = (card.querySelector('.c-transfer-quantity__label')?.textContent || '').trim().toLowerCase();
+            if (label === labelWanted) {
+                const el = card.querySelector('.c-transfer-quantity__value');
+                return el ? el.textContent.trim() : null;
+            }
+        }
+        return null;
+    }
+
+    // A freshly-created transfer that hasn't been counted yet shows "Not
+    // counted" / "—" instead of a number. Treat that the same as 0 in stock -
+    // the artwork exists, there's just nothing counted/available for it yet.
+    function normalizeQtyText(raw) {
+        if (raw === null) return null;
+        const t = raw.trim();
+        if (t === '' || t === '—' || t === '-' || /^not counted$/i.test(t)) return '0';
+        return t;
+    }
+
     function fetchTransferData(designNumber, callback) {
         const url = TRANSFER_FIND_BASE_URL + encodeURIComponent(designNumber) + '?_=' + Date.now();
         GM_xmlhttpRequest({
@@ -636,15 +645,15 @@
                 const doc = new DOMParser().parseFromString(response.responseText, 'text/html');
                 if (looksLoggedOut(doc, response)) { callback('logged-out', null); return; }
 
-                const availableEl = doc.querySelector('.c-transfer-quantity__value.text-success');
-                const reservedEl = doc.querySelector('.c-transfer-quantity__value.text-warning');
-                const totalEl = doc.querySelector('.c-transfer-quantity__value.text-secondary');
+                const totalRaw = findQtyCardValue(doc, 'total');
+                const availableRaw = findQtyCardValue(doc, 'available');
+                const reservedRaw = findQtyCardValue(doc, 'reserved');
 
-                if (availableEl && reservedEl && totalEl) {
+                if (totalRaw !== null && availableRaw !== null && reservedRaw !== null) {
                     callback('ok', {
-                        available: availableEl.textContent.trim(),
-                        reserved: reservedEl.textContent.trim(),
-                        total: totalEl.textContent.trim(),
+                        available: normalizeQtyText(availableRaw),
+                        reserved: normalizeQtyText(reservedRaw),
+                        total: normalizeQtyText(totalRaw),
                         transferUrl: response.finalUrl || url
                     });
                 } else {
@@ -656,6 +665,19 @@
                 console.error('[Stock Lookup] fetch failed for', designNumber, err);
                 callback('error', null);
             }
+        });
+    }
+
+    // Re-runs the inventory lookup for one row in place (no page reload) -
+    // used right after Create New succeeds, so the row immediately swaps its
+    // "In Stock: N/A / Create New / Link Now" boxes for the real new numbers.
+    function refreshRowStock(marker, designNumber) {
+        const qtyBox = findRowQtyBox(marker);
+        if (!qtyBox) return;
+        const container = qtyBox.parentElement;
+        container.querySelectorAll('.tm-stock-box').forEach(b => b.remove());
+        fetchTransferData(designNumber, function(status, data) {
+            injectRowState(marker, status, data, designNumber);
         });
     }
 
