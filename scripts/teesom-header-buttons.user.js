@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Teesom Buttons v9.23
 // @namespace    http://tampermonkey.net/
-// @version      4.2.1
-// @description  Adds SHOP MANUAL, TEESOM MANUAL, TRANSFERS (shows LOGIN NOW when signed out of the transfers site), (on an open order) COMPLETE & PRINT, (on the Job Board) SEND JOBS, (on the Order List) IMPORT CHIPPLY, and (on the Calendar) TIDY CALENDAR buttons to the top center of specific app.teesom.com pages, hides them from printed output if they ever appear anywhere else, and hides them while a popup/modal is genuinely visible so they don't render on top of it.
+// @version      4.3.1
+// @description  Adds SHOP MANUAL, TEESOM MANUAL, TRANSFERS (shows LOGIN NOW when signed out of the transfers site), (on an open order) COMPLETE & PRINT, (on the Job Board) SEND JOBS and PRINT DUE SOON, (on the Order List) IMPORT CHIPPLY, and (on the Calendar) TIDY CALENDAR buttons to the top center of specific app.teesom.com pages, hides them from printed output if they ever appear anywhere else, and hides them while a popup/modal is genuinely visible so they don't render on top of it.
 // @author       You
 // @match        https://app.teesom.com/saiw/orderlist.asp*
 // @match        https://app.teesom.com/saiw/jobboard.asp*
@@ -646,6 +646,137 @@
 
         const sendJobsBtn = makeBlueActionButton('SEND JOBS', () => openJobBoardSendModal());
         bar.appendChild(sendJobsBtn);
+        // ------------------------------------------------------------
+        // PRINT DUE SOON - Job Board only. Jobs due today + the next 2
+        // business days (by actual due date), flags anything not ready,
+        // and opens a one-page print sheet.
+        // ------------------------------------------------------------
+        const DUE_BIZ_DAYS = 3; // today + next 2 business days
+        const dueFmt = d => String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+        const dueClean = s => (s || '').replace(/\s+/g, ' ').trim();
+        const dueEsc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const DUE_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+        function dueWantedDates() {
+            const out = [];
+            const d = new Date();
+            out.push({ key: dueFmt(d), date: new Date(d) });
+            while (out.length < DUE_BIZ_DAYS) {
+                d.setDate(d.getDate() + 1);
+                if (d.getDay() % 6) out.push({ key: dueFmt(d), date: new Date(d) });
+            }
+            return out;
+        }
+
+        // Ring % from the on-screen text (the pNN class is stale on some jobs)
+        function dueRing(row, cls) {
+            const e = row.querySelector('.' + cls + ' .cprog-txt');
+            if (!e) return '-';
+            const m = dueClean(e.textContent).match(/\d+/);
+            return m ? m[0] : '?';
+        }
+        function dueStageNum(stage) { const m = stage.match(/^\((\d)/); return m ? parseInt(m[1], 10) : 0; }
+        function dueShortStage(stage) {
+            return stage.replace('Order is Ready for Production', 'Ready for Production').replace(/\s*-+>\s*/g, ' > ');
+        }
+
+        function dueCollect(want) {
+            const keys = want.map(w => w.key);
+            const jobs = [];
+            document.querySelectorAll('.jcwtsmjobrdrow').forEach(r => {
+                const x = r.querySelector('[title^="Due Date"]');
+                if (!x) return;
+                const due = x.getAttribute('title').replace('Due Date: ', '').trim();
+                if (!keys.includes(due)) return;
+                const sel = r.querySelector('select.inp-order-inv-stage-change');
+                const stage = sel ? dueClean(sel.options[sel.selectedIndex]?.text) : '';
+                const rep = dueClean(r.querySelector('[title="Sales Rep"]')?.textContent); // NOT .row-j-contact
+                const job = {
+                    num: dueClean(r.querySelector('.row-j-num')?.textContent),
+                    due,
+                    cust: dueClean(r.querySelector('.row-j-company:not(.row-j-contact)')?.textContent),
+                    desc: dueClean(r.querySelector('.row-j-desc')?.textContent),
+                    rep: rep.split(' ')[0] || rep,
+                    stage,
+                    art: dueRing(r, 'cprog-rt'),
+                    ord: dueRing(r, 'cprog-go'),
+                    gin: dueRing(r, 'cprog-gi'),
+                };
+                const low = [['Art', job.art], ['Goods Ordered', job.ord], ['Goods In', job.gin]].filter(([, v]) => v !== '100');
+                const n = dueStageNum(stage);
+                const reasons = [];
+                if (n && n < 4) reasons.push('Still at ' + dueShortStage(stage));
+                if (low.length) {
+                    const lowTxt = low.map(([k, v]) => k + ' ' + v + '%').join(', ');
+                    reasons.push(n >= 4 ? dueShortStage(stage).replace(/^\(\d+\w?\)\s*/, '') + ' but ' + lowTxt : lowTxt);
+                }
+                job.check = reasons.length > 0;
+                job.reason = reasons.join('; ');
+                jobs.push(job);
+            });
+            return jobs;
+        }
+
+        function dueBuildSheet(want, jobs) {
+            const now = new Date();
+            const dayLabel = (w, i) => (i === 0 ? 'TODAY - ' : '') + DUE_DOW[w.date.getDay()] + ' ' + (w.date.getMonth() + 1) + '/' + w.date.getDate();
+            const checks = jobs.filter(j => j.check);
+            const title = 'GG Silkscreen: Jobs Due ' + dayLabel(want[0], 1) + ' - ' + dayLabel(want[want.length - 1], 1);
+            const sub = 'By actual due date - Teesom Job Board, ' + now.toLocaleDateString() + ' ' +
+                now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ' - ' + jobs.length + ' jobs, ' + checks.length + ' need attention';
+            let flags = '';
+            if (checks.length) {
+                flags = '<div class="flags"><b>NEEDS LOOKING INTO</b><ul>' + checks.map(j => {
+                    const w = want.find(x => x.key === j.due);
+                    const when = j.due === want[0].key ? 'TODAY' : dayLabel(w, 1);
+                    return '<li>' + dueEsc(j.num + ' ' + j.cust + ' (' + j.rep + ') - due ' + when + '. ' + j.reason + '.') + '</li>';
+                }).join('') + '</ul></div>';
+            }
+            const ringCell = v => '<td class="c' + (v !== '100' ? ' low' : '') + '">' + dueEsc(v) + '</td>';
+            const days = want.map((w, i) => {
+                const rows = jobs.filter(j => j.due === w.key).sort((a, b) => b.check - a.check);
+                const body = rows.length ? rows.map(j =>
+                    '<tr><td class="box"></td><td>' + dueEsc(j.num) + '</td><td>' + dueEsc(j.cust + ' - ' + j.desc) + '</td><td>' + dueEsc(j.rep) +
+                    '</td><td>' + dueEsc(dueShortStage(j.stage)) + '</td>' + ringCell(j.art) + ringCell(j.ord) + ringCell(j.gin) +
+                    '<td class="' + (j.check ? 'chk' : 'rdy') + '">' + (j.check ? 'CHECK' : 'READY') + '</td></tr>').join('')
+                    : '<tr><td colspan="9" class="none">No jobs due</td></tr>';
+                return '<h3>' + dueEsc(dayLabel(w, i)) + '</h3><table><thead><tr><th>[ ]</th><th>Job</th><th>Customer / Description</th><th>Rep</th><th>Stage</th><th>Art</th><th>Ord</th><th>In</th><th>Status</th></tr></thead><tbody>' + body + '</tbody></table>';
+            }).join('');
+            return '<!doctype html><html><head><meta charset="utf-8"><title>' + dueEsc(title) + '</title><style>' +
+                '@page{size:letter;margin:0.45in}body{font-family:Helvetica,Arial,sans-serif;font-size:10px;color:#111;margin:0}' +
+                'h1{font-size:16px;margin:0 0 2px}.sub{font-size:10px;color:#444;margin-bottom:8px}' +
+                '.flags{border:2px solid #c80000;padding:5px 8px;margin-bottom:6px;font-size:10px}.flags ul{margin:3px 0 0;padding-left:16px}.flags li{margin:1px 0}' +
+                'h3{font-size:12px;margin:10px 0 3px}table{width:100%;border-collapse:collapse;font-size:9.5px}' +
+                'th,td{border:1px solid #999;padding:2px 4px;text-align:left;vertical-align:middle}th{background:#e6e6e6}' +
+                'td.c{text-align:center;width:28px}td.low{background:#ffd9d9;font-weight:bold}td.box{width:14px}' +
+                'td.chk{color:#c80000;font-weight:bold}td.rdy{color:#008000;font-weight:bold}td.none{color:#777;font-style:italic}' +
+                '*{-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
+                '</style></head><body><h1>' + dueEsc(title) + '</h1><div class="sub">' + dueEsc(sub) + '</div>' + flags + days +
+                '</body></html>';
+        }
+
+        function runPrintDueSoon() {
+            if (!document.querySelectorAll('.jcwtsmjobrdrow').length) { alert('No job rows found yet - wait for the Job Board to finish loading.'); return; }
+            const want = dueWantedDates();
+            const jobs = dueCollect(want);
+            const w = window.open('', '_blank');
+            if (!w) { alert('Popup blocked - allow popups for app.teesom.com.'); return; }
+            w.document.open();
+            w.document.write(dueBuildSheet(want, jobs));
+            w.document.close();
+            // Trigger print from here (inline scripts in the new tab can be blocked by Teesom's page rules)
+            w.focus();
+            setTimeout(() => { try { w.print(); } catch (e) { alert('Sheet is ready - press Ctrl+P to print.'); } }, 400);
+        }
+
+        // Same shape as the other bar buttons, in red so it stands apart from SEND JOBS.
+        const dueSoonBtn = makeActionButton('PRINT DUE SOON', runPrintDueSoon);
+        dueSoonBtn.title = 'Jobs due today + next 2 business days, with flags';
+        dueSoonBtn.style.backgroundColor = '#c80000';
+        dueSoonBtn.style.border = '1px solid #9a0000';
+        dueSoonBtn.onmouseover = () => dueSoonBtn.style.backgroundColor = '#9a0000';
+        dueSoonBtn.onmouseout = () => dueSoonBtn.style.backgroundColor = '#c80000';
+        bar.appendChild(dueSoonBtn);
     }
 
     // ================================================================
