@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Print for ESP Button Injector
 // @namespace    http://tampermonkey.net/
-// @version      1.5.1
-// @description  Adds a 'Print for ESP' button next to the custom options, hides contact info and Ship To block, and clicks Print.
+// @version      1.6
+// @description  Adds a 'Print for ESP' button next to the custom options, hides contact info, the Ship To block and the invoice QR code, and clicks Print.
 // @author       You
 // @match        https://app.teesom.com/saiw/print/printordertraveler.aspx*
 // @match        https://app.teesom.com/saiw/print/printwoadvanced.aspx*
@@ -17,6 +17,7 @@
     // Extra elements to hide before printing. Add more CSS selectors here.
     const EXTRA_HIDE_SELECTORS = [
         '.doc-header-address-shipto',
+        '.gg-invoice-qr',   // invoice QR code added by the Traveler QR add-on
     ];
 
     // Ensure our button never appears in print preview / printed output / Ctrl+P,
