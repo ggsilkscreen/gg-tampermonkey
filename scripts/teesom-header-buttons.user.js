@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Teesom Buttons v9.23
 // @namespace    http://tampermonkey.net/
-// @version      4.3.1
+// @version      4.4
 // @description  Adds SHOP MANUAL, TEESOM MANUAL, TRANSFERS (shows LOGIN NOW when signed out of the transfers site), (on an open order) COMPLETE & PRINT, (on the Job Board) SEND JOBS and PRINT DUE SOON, (on the Order List) IMPORT CHIPPLY, and (on the Calendar) TIDY CALENDAR buttons to the top center of specific app.teesom.com pages, hides them from printed output if they ever appear anywhere else, and hides them while a popup/modal is genuinely visible so they don't render on top of it.
 // @author       You
 // @match        https://app.teesom.com/saiw/orderlist.asp*
@@ -40,19 +40,31 @@
         } catch (e) { /* ignore */ }
 
         if (shouldAutoPrint) {
+            // Print as soon as the invoice is ready: the page's own print
+            // function (or its Print button) exists AND the page has finished
+            // loading (so the logo/images are on the sheet). Never waits more
+            // than ~3 seconds before printing anyway.
             const start = Date.now();
+            let fired = false;
+            const findPrintBtn = () => Array.from(document.querySelectorAll('button')).find(
+                (e) => e.textContent.trim() === 'Print'
+            );
+            const fire = () => {
+                if (fired) return;
+                fired = true;
+                clearInterval(timer);
+                setTimeout(() => {
+                    if (typeof window.PrintPage === 'function') window.PrintPage();
+                    else if (findPrintBtn()) findPrintBtn().click();
+                    else window.print();
+                }, 250);
+            };
             const timer = setInterval(() => {
-                if (typeof window.PrintPage === 'function') {
-                    clearInterval(timer);
-                    setTimeout(() => window.PrintPage(), 600);
-                } else if (Date.now() - start > 8000) {
-                    clearInterval(timer);
-                    const btn = Array.from(document.querySelectorAll('button')).find(
-                        (e) => e.textContent.trim() === 'Print'
-                    );
-                    if (btn) btn.click();
-                }
-            }, 150);
+                const ready = typeof window.PrintPage === 'function' || !!findPrintBtn();
+                const loaded = document.readyState === 'complete';
+                const waited = Date.now() - start;
+                if ((ready && loaded) || (ready && waited > 1500) || waited > 3000) fire();
+            }, 100);
         }
         return;
     }
@@ -217,6 +229,21 @@
         return new Promise((r) => setTimeout(r, ms));
     }
 
+    // Resolves once `root` has stopped changing for `quietMs` and shows no
+    // loading spinner - i.e. the popup has finished filling in. Max `timeout`.
+    async function waitForSettled(root, { quietMs = 800, timeout = 10000 } = {}) {
+        const start = Date.now();
+        const snapshot = () => root.innerHTML.length + ':' + root.querySelectorAll('*').length;
+        const busy = () => !!root.querySelector('.fa-spin, .spinner, .spinner-border, .loading, .loader');
+        let last = snapshot(), stableSince = Date.now();
+        while (Date.now() - start < timeout) {
+            await sleep(150);
+            const now = snapshot();
+            if (now !== last || busy()) { last = now; stableSince = Date.now(); }
+            else if (Date.now() - stableSince >= quietMs) return;
+        }
+    }
+
     function fireChange(el) {
         el.dispatchEvent(new Event('change', { bubbles: true }));
     }
@@ -277,14 +304,23 @@
             });
             submitBtn.click();
 
-            // "Send Email" preview modal
+            // "Send Email" preview modal. The Send button shows up before the
+            // email preview has finished loading, so wait until the popup stops
+            // changing (and any loading spinner is gone), plus a short buffer.
             const sendBtn = await waitFor(() => {
                 const el = document.getElementById(MAIL_SEND_BTN_ID);
-                return isElVisible(el) ? el : null;
+                return isElVisible(el) && !el.disabled ? el : null;
             });
+            toast('Waiting for the email preview to load…');
+            await waitForSettled(sendBtn.closest('.modal, [role="dialog"]') || document.body);
+            await sleep(1000);
             sendBtn.click();
 
-            await sleep(1200);
+            // Wait until the email popup closes (= sent) before moving on,
+            // instead of a fixed pause. Gives up waiting after 15s and continues.
+            await waitFor(() => !isElVisible(document.getElementById(MAIL_SEND_BTN_ID)), { timeout: 15000 })
+                .catch(() => console.warn('[Teesom Complete & Print] email popup still open after 15s - continuing'));
+            await sleep(500);
 
             toast('Opening print invoice…');
             const printItem = document.querySelector(PRINT_INVOICE_SELECTOR);
