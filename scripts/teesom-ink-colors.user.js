@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ink Color Dropdown Selector B v 9.23
 // @namespace    http://tampermonkey.net/
-// @version      3.0.1
+// @version      3.1
 // @description  Dropdown color selector with typing option
 // @author       You
 // @match        https://app.teesom.com/saiw/orderentry.asp*
@@ -47,7 +47,7 @@
         { color: '#008B8B', name: 'Teal ( PlySouth )', value: 'Teal ( PlySouth ) - ELTS PMS 3125' },
         { color: '#800080', name: 'Purple', value: 'Purple - ELT-S Purple' },
         { color: '#FF69B4', name: 'Pink', value: 'ELTS Millzy Pink' },
-        { color: '#FF1493', name: 'Neon Pink', value: 'Neon Pink - Neon Pink' },
+        { color: '#FF1493', name: 'Neon Pink', value: 'Hot Flo Pink' },
         { color: '#964B00', name: 'Brown', value: 'Brown - Epic Spice Brown' },
         { color: '#D2B48C', name: 'Tan', value: 'Tan - Wilflex 728C' },
         { color: '#C0C0C0', name: 'Metallic Silver', value: 'Metallic Silver - Metallic Silver' },
