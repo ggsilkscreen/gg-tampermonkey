@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Teesom Buttons v9.23
 // @namespace    http://tampermonkey.net/
-// @version      4.4
+// @version      4.4.1
 // @description  Adds SHOP MANUAL, TEESOM MANUAL, TRANSFERS (shows LOGIN NOW when signed out of the transfers site), (on an open order) COMPLETE & PRINT, (on the Job Board) SEND JOBS and PRINT DUE SOON, (on the Order List) IMPORT CHIPPLY, and (on the Calendar) TIDY CALENDAR buttons to the top center of specific app.teesom.com pages, hides them from printed output if they ever appear anywhere else, and hides them while a popup/modal is genuinely visible so they don't render on top of it.
 // @author       You
 // @match        https://app.teesom.com/saiw/orderlist.asp*
@@ -229,21 +229,6 @@
         return new Promise((r) => setTimeout(r, ms));
     }
 
-    // Resolves once `root` has stopped changing for `quietMs` and shows no
-    // loading spinner - i.e. the popup has finished filling in. Max `timeout`.
-    async function waitForSettled(root, { quietMs = 800, timeout = 10000 } = {}) {
-        const start = Date.now();
-        const snapshot = () => root.innerHTML.length + ':' + root.querySelectorAll('*').length;
-        const busy = () => !!root.querySelector('.fa-spin, .spinner, .spinner-border, .loading, .loader');
-        let last = snapshot(), stableSince = Date.now();
-        while (Date.now() - start < timeout) {
-            await sleep(150);
-            const now = snapshot();
-            if (now !== last || busy()) { last = now; stableSince = Date.now(); }
-            else if (Date.now() - stableSince >= quietMs) return;
-        }
-    }
-
     function fireChange(el) {
         el.dispatchEvent(new Event('change', { bubbles: true }));
     }
@@ -304,23 +289,16 @@
             });
             submitBtn.click();
 
-            // "Send Email" preview modal. The Send button shows up before the
-            // email preview has finished loading, so wait until the popup stops
-            // changing (and any loading spinner is gone), plus a short buffer.
+            // "Send Email" preview modal. The Send button appears a moment before
+            // the email preview finishes loading, so give it 1 extra second.
             const sendBtn = await waitFor(() => {
                 const el = document.getElementById(MAIL_SEND_BTN_ID);
-                return isElVisible(el) && !el.disabled ? el : null;
+                return isElVisible(el) ? el : null;
             });
-            toast('Waiting for the email preview to load…');
-            await waitForSettled(sendBtn.closest('.modal, [role="dialog"]') || document.body);
             await sleep(1000);
             sendBtn.click();
 
-            // Wait until the email popup closes (= sent) before moving on,
-            // instead of a fixed pause. Gives up waiting after 15s and continues.
-            await waitFor(() => !isElVisible(document.getElementById(MAIL_SEND_BTN_ID)), { timeout: 15000 })
-                .catch(() => console.warn('[Teesom Complete & Print] email popup still open after 15s - continuing'));
-            await sleep(500);
+            await sleep(1200);
 
             toast('Opening print invoice…');
             const printItem = document.querySelector(PRINT_INVOICE_SELECTOR);
