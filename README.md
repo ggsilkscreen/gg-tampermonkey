@@ -21,6 +21,7 @@ Teesom CRM add-ons for GG Silkscreen. Every script updates itself from this repo
 | Traveler - show row comments by default | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/teesom-traveler-row-comments.user.js) |
 | Traveler - invoice QR code | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/teesom-traveler-qr.user.js) |
 | Traveler / WO - Print for ESP button | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/teesom-print-for-esp.user.js) |
+| Chipply Improvements (Products list edit pencil) | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/chipply-improvements.user.js) |
 
 The Header buttons, Transfer stock and Traveler send-link scripts ask once for the GG API token. It is never stored in this repo.
 
