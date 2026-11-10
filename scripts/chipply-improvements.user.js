@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Chipply Improvements
 // @namespace    https://github.com/ggsilkscreen
-// @version      1.1
-// @description  GG Silkscreen tweaks for Chipply. Products list: always-visible Edit pencil on each row, plus a Print List button that opens a clean 8.5x11 portrait product list.
+// @version      1.2.1
+// @description  GG Silkscreen tweaks for Chipply. Products list: green Edit pencil above each Active toggle, plus a Print List button that opens a clean 8.5x11 portrait product list.
 // @author       GG Silkscreen
 // @match        https://manage.chipply.com/*
 // @grant        none
@@ -15,18 +15,16 @@
     'use strict';
 
     const CSS = `
+        /* Edit pencil sits in the Active column, above the toggle, in the toggle's green */
         .gg-edit-pencil {
             display: flex; align-items: center; justify-content: center;
-            width: 30px; height: 30px; margin: 0 auto 4px; padding: 0;
-            border: none; border-radius: 6px; cursor: pointer;
-            background: #1565c0; box-shadow: 0 1px 2px rgba(0,0,0,.25);
+            width: 24px; height: 24px; margin: 0 auto 6px; padding: 0;
+            border: none; border-radius: 5px; cursor: pointer;
+            background: #347e38; box-shadow: 0 1px 2px rgba(0,0,0,.25);
             transition: transform .1s, background .1s;
         }
-        .gg-edit-pencil:hover { background: #0d47a1; transform: scale(1.08); }
-        .gg-edit-pencil svg { width: 17px; height: 17px; fill: #fff; }
-        td.psvDragCell.gg-has-pencil {
-            width: 40px !important; min-width: 40px !important; text-align: center;
-        }
+        .gg-edit-pencil:hover { background: #28632b; transform: scale(1.1); }
+        .gg-edit-pencil svg { width: 14px; height: 14px; fill: #fff; }
         #gg-print-list-btn {
             display: inline-flex; align-items: center; gap: 6px;
             margin-left: 12px; height: 36px; padding: 0 14px;
@@ -52,8 +50,11 @@
     // ---------- Edit pencil on each product row ----------
     function addPencils() {
         document.querySelectorAll('tbody tr.tableRow').forEach(tr => {
-            const cell = tr.querySelector('td.psvDragCell');
-            if (!cell || cell.querySelector('.gg-edit-pencil')) return;
+            // The Active cell = the one holding the on/off toggle; stack the pencil under it
+            const slider = tr.querySelector('td span.slider');
+            const activeTd = slider && slider.closest('td');
+            const cell = activeTd && (activeTd.querySelector('.psvChildCell') || activeTd);
+            if (!cell || tr.querySelector('.gg-edit-pencil')) return;
             if (!tr.querySelector('.rowActionsCell button[title="Edit Product"]')) return;
 
             const btn = document.createElement('button');
@@ -68,7 +69,6 @@
                 const edit = tr.querySelector('.rowActionsCell button[title="Edit Product"]');
                 if (edit) edit.click();
             });
-            cell.classList.add('gg-has-pencil');
             cell.prepend(btn);
         });
     }
