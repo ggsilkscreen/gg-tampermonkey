@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chipply Look (Teesom colors)
 // @namespace    https://github.com/ggsilkscreen
-// @version      1.1
+// @version      1.1.1
 // @description  Restyles the Chipply admin in Teesom dark blue with higher contrast: outlined Process/Categories boxes, boxed inputs, striped rows, and hides Sort, Weight, MSRP and Combined on the Products list.
 // @author       GG Silkscreen
 // @match        https://manage.chipply.com/*
@@ -49,7 +49,7 @@
       .v-application { font-size: 14px; }
 
       /* Top navigation bar */
-      #topNavigation, .v-app-bar, header.v-toolbar.bg-primary, .v-app-bar .v-toolbar__content {
+      #topNavigation, .v-app-bar, .v-app-bar .v-toolbar__content {
           background: ${C.topBar} !important; color: ${C.topBarText} !important;
       }
       .v-app-bar .v-btn, .v-app-bar .v-btn__content, .v-app-bar .v-icon { color: ${C.topBarText} !important; }
