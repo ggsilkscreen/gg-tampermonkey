@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Chipply Look (Teesom colors)
 // @namespace    https://github.com/ggsilkscreen
-// @version      1.0
+// @version      1.1
 // @description  Restyles the Chipply admin in Teesom dark blue with higher contrast: outlined Process/Categories boxes, boxed inputs, striped rows, and hides Sort, Weight, MSRP and Combined on the Products list.
 // @author       GG Silkscreen
 // @match        https://manage.chipply.com/*
@@ -39,6 +39,11 @@
 
     const C = COLORS;
     const css = `
+      /* Swap Chipply's bright "primary" blue for Teesom dark blue everywhere it's used
+         (Account Dashboard title bars, count badges, loading bars, icon buttons...) */
+      :root, .v-theme--light { --v-theme-primary: 7,55,99 !important; }
+      .titleBackground { background-color: ${C.teesomBlue} !important; }
+
       /* Base text: no more faint grey */
       body, .v-application, .v-main { color: ${C.text} !important; background: ${C.pageBg} !important; }
       .v-application { font-size: 14px; }
