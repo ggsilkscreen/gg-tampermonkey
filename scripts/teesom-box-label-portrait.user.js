@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Teesom Box Label - Print Portrait
 // @namespace    ggsilkscreen
-// @version      1.2.0
-// @description  On the Print Box Label page, turns the label 90 degrees when you print (Print button or Ctrl+P). Same label, same size - just rotated. The screen view doesn't change.
+// @version      1.3.0
+// @description  On the Print Box Label page, turns the label 90 degrees when you print (Print button or Ctrl+P) and fits it on the 4x6 label. The screen view doesn't change.
 // @match        https://v.teesom.com/PrintSimpleBoxLabel/*
 // @match        http://v.teesom.com/PrintSimpleBoxLabel/*
 // @grant        none
@@ -15,6 +15,10 @@
     'use strict';
 
     const CLOCKWISE = true;   // false = turn it the other way
+    const LABEL_W_IN = 4;     // label stock, portrait (Teesom's box label is a 4 x 6 inch layout)
+    const LABEL_H_IN = 6;
+    const MARGIN_IN = 0.1;    // small white edge so nothing touches the label edge
+    const PX = 96;            // CSS pixels per inch
 
     const style = document.createElement('style');
     style.id = 'gg-label-print-style';
@@ -24,10 +28,17 @@
         const label = document.getElementById('page');
         if (!label) return;
         const w = label.offsetWidth, h = label.offsetHeight;
-        const turn = CLOCKWISE ? `translateX(${h}px) rotate(90deg)` : `translateY(${w}px) rotate(-90deg)`;
+        // Once turned, the label's width runs down the sheet and its height runs across. Shrink only if needed.
+        const availW = (LABEL_W_IN - 2 * MARGIN_IN) * PX, availH = (LABEL_H_IN - 2 * MARGIN_IN) * PX;
+        const k = Math.min(1, availW / h, availH / w);
+        const x = (LABEL_W_IN * PX - h * k) / 2, y = (LABEL_H_IN * PX - w * k) / 2;   // centered on the sheet
+        const turn = CLOCKWISE
+            ? `translate(${x + h * k}px, ${y}px) rotate(90deg) scale(${k})`
+            : `translate(${x}px, ${y + w * k}px) rotate(-90deg) scale(${k})`;
         style.textContent = `
           @media print {
-            @page { size: portrait; }
+            @page { size: ${LABEL_W_IN}in ${LABEL_H_IN}in; margin: 0; }
+            html, body { margin: 0 !important; padding: 0 !important; width: ${LABEL_W_IN}in !important; height: ${LABEL_H_IN}in !important; overflow: hidden !important; }
             #page { position: absolute !important; top: 0 !important; left: 0 !important; margin: 0 !important;
                     width: ${w}px !important; height: ${h}px !important;
                     transform-origin: 0 0 !important; transform: ${turn} !important; }
