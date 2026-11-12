@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --navy:#163C5C; --navy2:#0f2d46; --green:#2FA84F; --red:#C0392B; --ink:#1B2733; --muted:#55636F; --line:#D7DCE1; --bg:#F4F7F9; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 Arial, Helvetica, sans-serif; }
+  header { background:var(--navy); color:#fff; padding:18px 16px; }
+  header .wrap { display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap; }
+  header .brand { font-size:13px; font-weight:bold; letter-spacing:2px; color:#9FC4E8; }
+  header h1 { margin:2px 0 0; font-size:26px; }
+  header .who { font-size:14px; color:#DCE7F2; }
+  .wrap { max-width:980px; margin:0 auto; }
+  main { padding:18px 16px 120px; }
+  .intro { margin:0 0 16px; color:var(--muted); }
+  .job { background:#fff; border:1px solid var(--line); border-radius:10px; margin:0 0 18px; overflow:hidden; }
+  .jobhead { background:#e9eff5; border-bottom:1px solid var(--line); padding:10px 14px; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+  .jobhead b { color:var(--navy); font-size:17px; }
+  .jobhead span { color:var(--muted); font-size:13px; }
+  .art { display:flex; gap:12px; flex-wrap:wrap; padding:12px 14px; border-bottom:1px solid var(--line); }
+  .artcard { width:150px; }
+  .artcard .thumb { width:150px; height:120px; border:1px solid var(--line); border-radius:6px; background:#fafbfc center/contain no-repeat; cursor:zoom-in; }
+  .artcard .thumb.none { cursor:default; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px; }
+  .artcard .cap { font-size:12px; color:var(--muted); margin-top:4px; }
+  .artcard .cap b { color:var(--ink); }
+  .garment { display:grid; grid-template-columns:90px minmax(0,1fr); gap:14px; padding:14px; border-bottom:1px solid var(--line); }
+  .garment:last-child { border-bottom:0; }
+  .garment:nth-child(even) { background:#fbfcfd; }
+  .gimg { width:90px; height:90px; border:1px solid var(--line); border-radius:6px; background:#fff center/contain no-repeat; cursor:zoom-in; }
+  .gimg.none { cursor:default; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:11px; text-align:center; }
+  .gname { font-weight:bold; }
+  .gname small { font-weight:normal; color:var(--muted); }
+  .gcolor { color:var(--muted); font-size:14px; margin-bottom:8px; }
+  .sizes { display:flex; flex-wrap:wrap; gap:8px; }
+  .size { width:64px; text-align:center; }
+  .size label { display:block; font-size:12px; font-weight:bold; color:var(--navy); }
+  .size input { width:64px; padding:7px 4px; border:1px solid #b9c2cb; border-radius:5px; text-align:center; font-size:15px; }
+  .size input:focus { outline:2px solid #9FC4E8; border-color:var(--navy); }
+  .size input.on { background:#eaf6ee; border-color:var(--green); }
+  .size .last { font-size:11px; color:var(--muted); }
+  .bar { position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--line); box-shadow:0 -2px 10px rgba(0,0,0,.08); padding:12px 16px; }
+  .bar .wrap { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  .count b { font-size:20px; color:var(--navy); }
+  button.primary { background:var(--green); color:#fff; border:0; border-radius:6px; padding:12px 20px; font-size:16px; font-weight:bold; cursor:pointer; }
+  button.primary:disabled { opacity:.45; cursor:default; }
+  button.ghost { background:#fff; color:var(--navy); border:1px solid var(--line); border-radius:6px; padding:11px 16px; font-size:15px; cursor:pointer; }
+  .panel { background:#fff; border:1px solid var(--line); border-radius:10px; padding:18px; }
+  .panel h2 { margin:0 0 12px; color:var(--navy); font-size:20px; }
+  .grid2 { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; }
+  .field label { display:block; font-size:13px; font-weight:bold; margin-bottom:4px; }
+  .field input, .field textarea { width:100%; padding:9px 10px; border:1px solid #b9c2cb; border-radius:6px; font:15px Arial, sans-serif; }
+  .field textarea { min-height:80px; }
+  .summary { margin:0 0 14px; border:1px solid var(--line); border-radius:8px; }
+  .summary div { padding:8px 12px; border-bottom:1px solid var(--line); font-size:14px; }
+  .summary div:last-child { border-bottom:0; }
+  .err { color:var(--red); margin:10px 0 0; }
+  .note { color:var(--muted); font-size:13px; }
+  .center { text-align:center; padding:50px 16px; }
+  .done h2 { color:var(--green); }
+  #zoom { position:fixed; inset:0; background:rgba(0,0,0,.8); display:none; align-items:center; justify-content:center; z-index:50; cursor:zoom-out; padding:20px; }
+  #zoom img { max-width:100%; max-height:100%; background:#fff; border-radius:6px; }
+  @media (max-width:600px) {
+    header h1 { font-size:22px; }
+    .grid2 { grid-template-columns:minmax(0,1fr); }
+    .garment { grid-template-columns:64px minmax(0,1fr); }
+    .gimg { width:64px; height:64px; }
+    .artcard { width:calc(50% - 6px); } .artcard .thumb { width:100%; }
+    .size, .size input { width:54px; }
+  }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div><div class="brand">GG SILKSCREEN &amp; EMBROIDERY</div><h1>Reorder</h1></div>
+  <div class="who" id="who"></div>
+</div></header>
+<main><div class="wrap" id="app"><div class="center">Loading your items...</div></div></main>
+<div class="bar" id="bar" style="display:none"><div class="wrap">
+  <div class="count"><b id="pcs">0</b> pieces selected</div>
+  <button class="primary" id="next" disabled>Review &amp; send</button>
+</div></div>
+<div id="zoom"><img alt=""></div>
+
+<script>
+var TOKEN = '';
+var DATA = null;
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function $(id) { return document.getElementById(id); }
+var app = $('app');
+
+function zoom(src) { if (!src) return; var z = $('zoom'); z.querySelector('img').src = src; z.style.display = 'flex'; }
+$('zoom').onclick = function () { this.style.display = 'none'; };
+
+function load() {
+  google.script.run.withSuccessHandler(function (d) {
+    if (!d.ok) { app.innerHTML = '<div class="center">' + esc(d.error) + '</div>'; return; }
+    DATA = d; render();
+  }).withFailureHandler(function (e) { app.innerHTML = '<div class="center">Something went wrong loading this page. Please try again later.</div>'; }).getPortal(TOKEN);
+}
+
+function render() {
+  $('who').textContent = DATA.customer;
+  if (!DATA.jobs.length) { app.innerHTML = '<div class="center">There is nothing set up for reorder yet. Please contact GG Silkscreen at (508) 830-1075.</div>'; return; }
+  var h = '<p class="intro">Enter the quantity you need under each size, then press <b>Review &amp; send</b>. We\'ll confirm pricing and the due date with you before anything is printed.</p>';
+  DATA.jobs.forEach(function (j, ji) {
+    h += '<section class="job"><div class="jobhead"><b>' + esc(j.name) + '</b><span>Last ordered on #' + esc(j.orderNo) + '</span></div>';
+    if (j.designs.length) {
+      h += '<div class="art">' + j.designs.map(function (d) {
+        var img = d.img ? '<div class="thumb" data-z="' + esc(d.img) + '" style="background-image:url(\'' + esc(d.img) + '\')"></div>' : '<div class="thumb none">No image</div>';
+        return '<div class="artcard">' + img + '<div class="cap"><b>' + esc(d.location || d.name || 'Artwork') + '</b><br>' + esc(d.number) + '</div></div>';
+      }).join('') + '</div>';
+    }
+    j.garments.forEach(function (g, gi) {
+      h += '<div class="garment">' + (g.img ? '<div class="gimg" data-z="' + esc(g.img) + '" style="background-image:url(\'' + esc(g.img) + '\')"></div>' : '<div class="gimg none">No photo</div>') + '<div>' +
+        '<div class="gname">' + esc(g.style) + ' <small>' + esc(g.name || '') + '</small></div><div class="gcolor">' + esc(g.color) + '</div><div class="sizes">' +
+        g.sizes.map(function (s, si) {
+          return '<div class="size"><label for="q' + ji + '_' + gi + '_' + si + '">' + esc(s.size) + '</label><input id="q' + ji + '_' + gi + '_' + si + '" type="number" inputmode="numeric" min="0" step="1" data-j="' + ji + '" data-g="' + gi + '" data-s="' + si + '">' +
+            '<div class="last">' + (s.last ? 'last: ' + s.last : '&nbsp;') + '</div></div>';
+        }).join('') + '</div></div></div>';
+    });
+    h += '</section>';
+  });
+  app.innerHTML = h;
+  $('bar').style.display = 'block';
+  app.querySelectorAll('[data-z]').forEach(function (e) { e.onclick = function () { zoom(e.getAttribute('data-z')); }; });
+  app.querySelectorAll('input[type=number]').forEach(function (i) { i.oninput = count; });
+  count();
+}
+
+function lines() {
+  var map = {};
+  document.querySelectorAll('input[data-j]').forEach(function (i) {
+    var q = Math.floor(Number(i.value) || 0); if (q <= 0) return;
+    var j = DATA.jobs[+i.dataset.j], g = j.garments[+i.dataset.g], s = g.sizes[+i.dataset.s];
+    var k = i.dataset.j + '_' + i.dataset.g;
+    (map[k] = map[k] || { jobId: j.id, jobName: j.name, style: g.style, color: g.color, sizes: [] }).sizes.push([s.size, q]);
+  });
+  return Object.keys(map).map(function (k) { return map[k]; });
+}
+
+function count() {
+  var n = 0;
+  document.querySelectorAll('input[data-j]').forEach(function (i) { var q = Math.floor(Number(i.value) || 0); i.classList.toggle('on', q > 0); if (q > 0) n += q; });
+  $('pcs').textContent = n; $('next').disabled = !n;
+}
+
+var SAVED = null;
+$('next').onclick = function () {
+  SAVED = Array.prototype.map.call(document.querySelectorAll('input[data-j]'), function (i) { return i.value; });
+  var L = lines(), total = 0;
+  L.forEach(function (l) { l.sizes.forEach(function (s) { total += s[1]; }); });
+  $('bar').style.display = 'none';
+  var today = new Date(); today.setDate(today.getDate() + 1);
+  app.innerHTML = '<div class="panel"><h2>Review your reorder</h2><div class="summary">' +
+    L.map(function (l) { return '<div><b>' + esc(l.style) + '</b> ' + esc(l.color) + ' <span class="note">(' + esc(l.jobName) + ')</span><br>' + l.sizes.map(function (s) { return esc(s[0]) + ' x ' + s[1]; }).join(', ') + '</div>'; }).join('') +
+    '<div><b>' + total + ' pieces total</b></div></div>' +
+    '<div class="grid2"><div class="field"><label for="f-name">Your name *</label><input id="f-name" autocomplete="name" value="' + esc(DATA.contact || '') + '"></div>' +
+    '<div class="field"><label for="f-email">Email *</label><input id="f-email" type="email" autocomplete="email"></div>' +
+    '<div class="field"><label for="f-phone">Phone</label><input id="f-phone" type="tel" autocomplete="tel"></div>' +
+    '<div class="field"><label for="f-date">Needed by</label><input id="f-date" type="date" min="' + today.toISOString().slice(0, 10) + '"></div></div>' +
+    '<div class="field" style="margin-top:12px"><label for="f-notes">Notes (changes, names, shipping...)</label><textarea id="f-notes"></textarea></div>' +
+    '<p class="note">This is a request, not a payment. We\'ll email you pricing and a due date to confirm.</p>' +
+    '<div style="display:flex;gap:10px;flex-wrap:wrap"><button class="ghost" id="back">Back</button><button class="primary" id="send">Send reorder request</button></div><div class="err" id="err"></div></div>';
+  $('back').onclick = function () { render(); document.querySelectorAll('input[data-j]').forEach(function (i, n) { i.value = SAVED[n]; }); count(); };
+  $('send').onclick = function () {
+    var btn = this, err = $('err'); err.textContent = '';
+    var form = { name: $('f-name').value, email: $('f-email').value, phone: $('f-phone').value, neededBy: $('f-date').value, notes: $('f-notes').value, lines: L };
+    if (!form.name.trim()) { err.textContent = 'Please enter your name.'; return; }
+    if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) { err.textContent = 'Please enter a valid email address.'; return; }
+    btn.disabled = true; btn.textContent = 'Sending...';
+    google.script.run.withSuccessHandler(function (r) {
+      app.innerHTML = '<div class="panel center done"><h2>Thank you, your reorder was sent.</h2><p>' + r.pieces + ' pieces &middot; reference ' + esc(r.id) + '</p><p class="note">We\'ll be in touch with pricing and a due date. Questions? Call (508) 830-1075.</p></div>';
+      window.scrollTo(0, 0);
+    }).withFailureHandler(function (e) { btn.disabled = false; btn.textContent = 'Send reorder request'; err.textContent = (e && e.message) || 'Could not send. Please try again.'; }).submitReorder(TOKEN, form);
+  };
+  window.scrollTo(0, 0);
+};
+
+google.script.url.getLocation(function (loc) { TOKEN = (loc.parameter && loc.parameter.k) || ''; load(); });
+</script>
+</body>
+</html>
