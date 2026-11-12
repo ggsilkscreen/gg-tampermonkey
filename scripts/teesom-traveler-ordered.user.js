@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Teesom Traveler - Ordered Checkmarks + PO
 // @namespace    ggsilkscreen
-// @version      1.2.0
-// @description  On the printed shop traveler, ticks the "Ordered" box for every garment that's on a purchase order, and writes the vendor and PO # (e.g. "SanMar #14541") in the blank space at the bottom of the page, in a clear handwritten-style font. Also shows each style's catalog (e.g. SanMar) next to the style code.
+// @version      1.3.0
+// @description  On the printed shop traveler, ticks the "Ordered" box for every garment that's on a purchase order, and writes the vendor and Vendor Ref # (e.g. "SanMar #19742") in the blank space at the bottom of the page, in a clear handwritten-style font. Also shows each style's catalog (e.g. SanMar) next to the style code.
 // @match        https://app.teesom.com/saiw/print/printordertraveler.aspx*
 // @grant        none
 // @run-at       document-idle
@@ -100,7 +100,7 @@
                     postJSON('/saiw/apc/purchasing/po_entry_load.ashx', { ajxaction: 'load-po-detail', poid }),
                 ]);
                 const pd = det.podetail || det;
-                const label = { po: pd.ponumber, vendor: (pd.suppliername || '').trim(), voided: !!pd.voided };
+                const label = { po: pd.ponumber, ref: (pd.VendorRef || '').trim(), vendor: (pd.suppliername || '').trim(), voided: !!pd.voided };
                 if (label.voided || !label.po) continue;
                 ((items.itemdetail || {}).items || []).forEach((it) => {
                     const mine = (it.subItems || []).some((s) => s.orderid === orderId);
@@ -167,7 +167,7 @@
 
         // One line in the blank space at the bottom of the page: "Ordered: SanMar #14541  ·  S&S Activewear #14651"
         if (allPOs.size) {
-            const text = 'Ordered: ' + Array.from(allPOs.values()).map((p) => (p.vendor ? p.vendor + ' ' : '') + '#' + p.po).join('   ·   ');
+            const text = 'Ordered: ' + Array.from(allPOs.values()).map((p) => (p.vendor ? p.vendor + ' ' : '') + (p.ref ? '#' + p.ref : 'PO #' + p.po))   // Vendor Ref, or PO # if a PO has none.join('   ·   ');
             const pages = Array.from(document.querySelectorAll('.page'));
             const targets = PO_PAGE === 'all' ? pages : PO_PAGE === 'last' ? pages.slice(-1) : pages.slice(0, 1);
             targets.forEach((page) => {
