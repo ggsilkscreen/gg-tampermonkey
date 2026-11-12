@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Teesom Copy Buttons (Design Number + Email) V9.23
 // @namespace    https://app.teesom.com/
-// @version      1.3.0
+// @version      1.3.1
 // @description  Copy icons for design numbers and emails, plus order-page helpers: customer balance next to the customer name, $0 garment cost alert, due date check before Convert to Invoice, Duplicate switches the new order to your name, traveler Ordered checkmarks + catalog tags + vendor/Vendor Ref line, and the G&G box label that prints turned on 4x6.
 // @author       Ross
 // @match        https://app.teesom.com/*
@@ -492,19 +492,19 @@
 
     const LOG = (...a) => console.log('[Traveler Ordered]', ...a);
 
-    // Handwritten-style font (Caveat). Falls back to a cursive system font if it can't load.
+    // Marker font (Bebas Neue, condensed caps). Falls back to a condensed system font if it can't load.
     const font = document.createElement('link');
     font.rel = 'stylesheet';
-    font.href = 'https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&display=swap';
+    font.href = 'https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap';
     document.head.appendChild(font);
 
     const css = document.createElement('style');
     css.textContent = `
-      .gg-hand{font-family:'Kalam','Segoe Print','Bradley Hand',cursive;color:${INK};font-weight:700;line-height:1}
+      .gg-hand{font-family:'Bebas Neue','Arial Narrow',Impact,sans-serif;color:${INK};font-weight:400;letter-spacing:0.5px;line-height:1}
       .gg-check{font-size:20px;display:flex;align-items:center;justify-content:center;height:100%}
-      .gg-part{font-size:14px}
+      .gg-part{font-size:16px}
       .gg-cat{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:3px;background:#163C5C;color:#fff;font:bold 10px Arial,sans-serif;vertical-align:middle;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-      .gg-po-line{position:absolute;left:0.5in;right:0.5in;bottom:${PO_BOTTOM_IN}in;font-size:20px;z-index:40}
+      .gg-po-line{position:absolute;left:0.5in;right:0.5in;bottom:${PO_BOTTOM_IN}in;font-size:24px;z-index:40}
       @media print{.gg-hand{color:${INK} !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}`;
     document.head.appendChild(css);
 
