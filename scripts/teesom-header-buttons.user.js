@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Teesom Buttons v9.23
 // @namespace    http://tampermonkey.net/
-// @version      4.4.1
-// @description  Adds SHOP MANUAL, TEESOM MANUAL, TRANSFERS (shows LOGIN NOW when signed out of the transfers site), (on an open order) COMPLETE & PRINT, (on the Job Board) SEND JOBS and PRINT DUE SOON, (on the Order List) IMPORT CHIPPLY, and (on the Calendar) TIDY CALENDAR buttons to the top center of specific app.teesom.com pages, hides them from printed output if they ever appear anywhere else, and hides them while a popup/modal is genuinely visible so they don't render on top of it.
+// @version      4.5
+// @description  Adds SHOP MANUAL, TEESOM MANUAL, TRANSFERS (shows DTF LOGIN when signed out of the transfers site), (on an open order) COMPLETE & PRINT, (on the Job Board) SEND JOBS and PRINT DUE SOON, (on the Order List) IMPORT CHIPPLY, and (on the Calendar) TIDY CALENDAR buttons to the top center of specific app.teesom.com pages, hides them from printed output if they ever appear anywhere else, and hides them while a popup/modal is genuinely visible so they don't render on top of it.
 // @author       You
 // @match        https://app.teesom.com/saiw/orderlist.asp*
 // @match        https://app.teesom.com/saiw/jobboard.asp*
@@ -27,6 +27,10 @@
     'use strict';
 
     const AUTO_PRINT_FLAG = 'tm-complete-print-auto-print';
+
+    // ---- Button switches: set to true to bring a button back (code is kept) ----
+    const SHOW_SEND_JOBS = false;       // SEND JOBS on the Job Board
+    const SHOW_IMPORT_CHIPPLY = false;  // IMPORT CHIPPLY on the Order List
 
     // ---------------------------------------------------------------
     // Print Invoice page: no button bar here, just auto-trigger the
@@ -159,8 +163,8 @@
     bar.appendChild(teesomManualBtn);
     bar.appendChild(transfersBtn);
 
-    // 3a. TRANSFERS -> LOGIN NOW when not signed in to ggh.nacoteds.com.
-    // LOGIN NOW still points at /transfers: the site redirects to its login
+    // 3a. TRANSFERS -> DTF LOGIN when not signed in to ggh.nacoteds.com.
+    // DTF LOGIN still points at /transfers: the site redirects to its login
     // page and drops you back on Transfers after you sign in.
     // Re-checks whenever this tab regains focus, so logging in in another
     // tab flips the button back to TRANSFERS on its own.
@@ -169,7 +173,7 @@
     function setTransfersState(loggedIn) {
         const base  = loggedIn ? '#073763' : '#c0392b';
         const hover = loggedIn ? '#062f54' : '#962d22';
-        transfersBtn.innerText = loggedIn ? 'TRANSFERS' : 'LOGIN NOW';
+        transfersBtn.innerText = loggedIn ? 'TRANSFERS' : 'DTF LOGIN';
         transfersBtn.href = TRANSFERS_URL;
         transfersBtn.title = loggedIn ? '' : 'Not logged in to the transfers site - click to log in';
         transfersBtn.style.backgroundColor = base;
@@ -659,7 +663,7 @@
         }
 
         const sendJobsBtn = makeBlueActionButton('SEND JOBS', () => openJobBoardSendModal());
-        bar.appendChild(sendJobsBtn);
+        if (SHOW_SEND_JOBS) bar.appendChild(sendJobsBtn);
         // ------------------------------------------------------------
         // PRINT DUE SOON - Job Board only. Jobs due today + the next 2
         // business days (by actual due date), flags anything not ready,
@@ -1262,7 +1266,7 @@
   importBtn.style.border = '1px solid #062f54';
   importBtn.onmouseover = () => importBtn.style.backgroundColor = '#062f54';
   importBtn.onmouseout = () => importBtn.style.backgroundColor = '#073763';
-  bar.appendChild(importBtn);
+  if (SHOW_IMPORT_CHIPPLY) bar.appendChild(importBtn);
     })();
     }
 
