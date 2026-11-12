@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Teesom Traveler - Ordered Checkmarks + PO
 // @namespace    ggsilkscreen
-// @version      1.3.0
+// @version      1.4.0
 // @description  On the printed shop traveler, ticks the "Ordered" box for every garment that's on a purchase order, and writes the vendor and Vendor Ref # (e.g. "SanMar #19742") in the blank space at the bottom of the page, in a clear handwritten-style font. Also shows each style's catalog (e.g. SanMar) next to the style code.
 // @match        https://app.teesom.com/saiw/print/printordertraveler.aspx*
 // @grant        none
@@ -14,7 +14,7 @@
     'use strict';
 
     // ---- Settings ----------------------------------------------------------
-    const INK = '#1a3fa8';          // "pen" color for the handwriting (dark blue)
+    const INK = '#c62828';          // "marker" color for the handwriting (red). Dark blue was '#1a3fa8'
     const PO_PAGE = 'first';        // which page gets the PO line: 'first', 'last' or 'all'
     const PO_BOTTOM_IN = 0.7;       // inches up from the bottom edge of the page
     // -----------------------------------------------------------------------
@@ -24,12 +24,12 @@
     // Handwritten-style font (Caveat). Falls back to a cursive system font if it can't load.
     const font = document.createElement('link');
     font.rel = 'stylesheet';
-    font.href = 'https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap';
+    font.href = 'https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&display=swap';
     document.head.appendChild(font);
 
     const css = document.createElement('style');
     css.textContent = `
-      .gg-hand{font-family:'Patrick Hand','Segoe Print','Bradley Hand',cursive;color:${INK};line-height:1}
+      .gg-hand{font-family:'Kalam','Segoe Print','Bradley Hand',cursive;color:${INK};font-weight:700;line-height:1}
       .gg-check{font-size:20px;display:flex;align-items:center;justify-content:center;height:100%}
       .gg-part{font-size:14px}
       .gg-cat{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:3px;background:#163C5C;color:#fff;font:bold 10px Arial,sans-serif;vertical-align:middle;-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -167,7 +167,7 @@
 
         // One line in the blank space at the bottom of the page: "Ordered: SanMar #14541  ·  S&S Activewear #14651"
         if (allPOs.size) {
-            const text = 'Ordered: ' + Array.from(allPOs.values()).map((p) => (p.vendor ? p.vendor + ' ' : '') + (p.ref ? '#' + p.ref : 'PO #' + p.po)).join('   ·   ');   // Vendor Ref, or PO # if a PO has none
+            const text = Array.from(allPOs.values()).map((p) => (p.vendor ? p.vendor + ' ' : '') + (p.ref ? '#' + p.ref : 'PO #' + p.po)).join('   ·   ');   // Vendor Ref, or PO # if a PO has none
             const pages = Array.from(document.querySelectorAll('.page'));
             const targets = PO_PAGE === 'all' ? pages : PO_PAGE === 'last' ? pages.slice(-1) : pages.slice(0, 1);
             targets.forEach((page) => {
