@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Teesom Copy Buttons (Design Number + Email) V9.23
 // @namespace    https://app.teesom.com/
-// @version      1.2.2
-// @description  Copy icons for design numbers and emails, plus order-page helpers: customer balance next to the customer name, $0 garment cost alert, due date check before Convert to Invoice, and Duplicate switches the new order to your name.
+// @version      1.3.0
+// @description  Copy icons for design numbers and emails, plus order-page helpers: customer balance next to the customer name, $0 garment cost alert, due date check before Convert to Invoice, Duplicate switches the new order to your name, traveler Ordered checkmarks + catalog tags + vendor/Vendor Ref line, and the G&G box label that prints turned on 4x6.
 // @author       Ross
 // @match        https://app.teesom.com/*
+// @match        https://v.teesom.com/PrintSimpleBoxLabel/*
 // @grant        GM_setClipboard
 // @grant        unsafeWindow
 // @run-at       document-idle
@@ -14,6 +15,7 @@
 
 (function () {
     'use strict';
+    if (location.hostname !== 'app.teesom.com') return;
 
     // Each target: a CSS selector for the element to copy, a label for the
     // button tooltip, and (optionally) how to pull the text to copy out of
@@ -471,5 +473,347 @@
         let me = null;
         try { me = localStorage.getItem(ME_KEY); } catch (err) { /* ignore */ }
         if (me) setRep(me); else pickMe(setRep);
+    })();
+})();
+
+
+/* =====================================================================
+ * PRINT TRAVELER: Ordered checkmarks, catalog tags, vendor + Vendor Ref line
+ * ===================================================================== */
+(function () {
+    'use strict';
+    if (location.hostname !== 'app.teesom.com' || !/\/saiw\/print\/printordertraveler\.aspx/i.test(location.pathname)) return;
+
+    // ---- Settings ----------------------------------------------------------
+    const INK = '#c62828';          // "marker" color for the handwriting (red). Dark blue was '#1a3fa8'
+    const PO_PAGE = 'first';        // which page gets the PO line: 'first', 'last' or 'all'
+    const PO_BOTTOM_IN = 0.7;       // inches up from the bottom edge of the page
+    // -----------------------------------------------------------------------
+
+    const LOG = (...a) => console.log('[Traveler Ordered]', ...a);
+
+    // Handwritten-style font (Caveat). Falls back to a cursive system font if it can't load.
+    const font = document.createElement('link');
+    font.rel = 'stylesheet';
+    font.href = 'https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&display=swap';
+    document.head.appendChild(font);
+
+    const css = document.createElement('style');
+    css.textContent = `
+      .gg-hand{font-family:'Kalam','Segoe Print','Bradley Hand',cursive;color:${INK};font-weight:700;line-height:1}
+      .gg-check{font-size:20px;display:flex;align-items:center;justify-content:center;height:100%}
+      .gg-part{font-size:14px}
+      .gg-cat{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:3px;background:#163C5C;color:#fff;font:bold 10px Arial,sans-serif;vertical-align:middle;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .gg-po-line{position:absolute;left:0.5in;right:0.5in;bottom:${PO_BOTTOM_IN}in;font-size:20px;z-index:40}
+      @media print{.gg-hand{color:${INK} !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}`;
+    document.head.appendChild(css);
+
+    // Teesom's own AJAX calls send a random "SystSKey" header; requests without it get a 404.
+    function sysKey() {
+        const b = new Uint8Array(60);
+        crypto.getRandomValues(b);
+        const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        return Array.from(b, (x) => c[x % 62]).join('');
+    }
+    async function post(url, data) {
+        const r = await fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'SystSKey': sysKey() },
+            body: new URLSearchParams(data),
+        });
+        if (!r.ok) throw new Error(url + ' -> ' + r.status);
+        return r.text();
+    }
+    const postJSON = async (url, data) => JSON.parse(await post(url, data));
+
+    const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').replace(/\s*\/\s*/g, '/').trim();
+    const keyOf = (code, color, size) => norm(code) + '|' + norm(color) + '|' + norm(size);
+
+    // The traveler URL uses a view id, so find the real order id from the order number in the title.
+    async function findOrderId(num) {
+        const fd = new FormData();
+        fd.append('search_value', num);
+        const r = await fetch('https://capi.teesom.com/GlobalSearch', { method: 'POST', body: fd, credentials: 'include' });
+        const j = await r.json();
+        const hit = (j.response || []).find((x) => x.type === 'Order' && String(x.title) === String(num));
+        return hit ? hit.id : null;
+    }
+
+    async function loadData(orderId) {
+        // 1. How many of each garment are on a PO
+        const tr = await postJSON('/saiw/apc/salesorder/order_detail_core_load.ashx', { ajxaction: 'load-order-qty-item-transactions', ord: orderId });
+        const qty = {};
+        (tr.items || []).forEach((i) => {
+            const k = keyOf(i.code, i.color, i.size);
+            const q = qty[k] || (qty[k] = { needed: 0, purchased: 0 });
+            q.needed += Number(i.qty_to_order || 0);
+            q.purchased += Number(i.qty_purchased || 0);
+        });
+
+        // 2. Which POs this order's goods are on (from Teesom's Goods view)
+        const goods = await postJSON('/saiw/adm_getdata.asp', { ajxaction: 'loadiwogoodsperjob', dbid: '', ord: orderId, t: '' });
+        const poIds = new Set();
+        ['goodsordered', 'goodsreceived', 'goodscsg'].forEach((f) => {
+            const doc = new DOMParser().parseFromString(goods[f] || '', 'text/html');
+            doc.querySelectorAll('a[href*="poentry.asp"]').forEach((a) => {
+                const id = new URL(a.getAttribute('href'), location.origin + '/saiw/').searchParams.get('oid');
+                if (id) poIds.add(id);
+            });
+        });
+
+        // 3. Each PO's number, Vendor Ref, and which of its lines belong to this order
+        const poByItem = {};
+        for (const poid of poIds) {
+            try {
+                const [items, det] = await Promise.all([
+                    postJSON('/saiw/apc/purchasing/po_entry_load.ashx', { ajxaction: 'load-po-items', poid }),
+                    postJSON('/saiw/apc/purchasing/po_entry_load.ashx', { ajxaction: 'load-po-detail', poid }),
+                ]);
+                const pd = det.podetail || det;
+                const label = { po: pd.ponumber, ref: (pd.VendorRef || '').trim(), vendor: (pd.suppliername || '').trim(), voided: !!pd.voided };
+                if (label.voided || !label.po) continue;
+                ((items.itemdetail || {}).items || []).forEach((it) => {
+                    const mine = (it.subItems || []).some((s) => s.orderid === orderId);
+                    if (!mine) return;
+                    const k = keyOf(it.code, it.color, it.size);
+                    const list = poByItem[k] || (poByItem[k] = []);
+                    if (!list.some((x) => x.po === label.po)) list.push(label);
+                });
+            } catch (e) { LOG('PO load failed', poid, e); }
+        }
+        // 4. Catalog name per style code, from the order's detail rows ("Catalog Used" tag)
+        const catalog = {};
+        try {
+            const html = await post('/saiw/adm_getdata.asp?q=oe_d_l_1', { ajxaction: 'getorderdetail', orderlink: orderId, screen_width: 1600, screen_height: 900 });
+            new DOMParser().parseFromString(html, 'text/html').querySelectorAll('p.lbllinestyle').forEach((p) => {
+                const tag = p.querySelector('[title="Catalog Used"]');
+                const code = (p.firstChild && p.firstChild.nodeType === 3 ? p.firstChild.nodeValue : '').trim();
+                if (tag && code && !catalog[norm(code)]) catalog[norm(code)] = tag.textContent.trim();
+            });
+        } catch (e) { LOG('catalog load failed', e); }
+        return { qty, poByItem, catalog };
+    }
+
+    function mark({ qty, poByItem, catalog }) {
+        // Which option column is "Ordered"?
+        const headers = Array.from(document.querySelectorAll('.page-header .page-header-option-wrap'));
+        let col = headers.findIndex((h) => /^\s*ordered\s*$/i.test(h.textContent));
+        if (col < 0) col = 0;
+
+        let code = '', color = '', ticked = 0;
+        const allPOs = new Map();
+        document.querySelectorAll('.page .page-row').forEach((row) => {
+            if (!row.classList.contains('page-job-item-row-type-products')) return;   // garments only
+            const codeEl = row.querySelector('.page-row-code-style');
+            const colorTxt = (row.querySelector('.page-row-color') || {}).textContent || '';
+            if (codeEl && codeEl.textContent.trim()) {                                    // a new item starts
+                code = codeEl.textContent.trim();
+                const cat = catalog[norm(code)];
+                if (cat && !row.querySelector('.gg-cat')) {
+                    const t = document.createElement('span');
+                    t.className = 'gg-cat';
+                    t.textContent = cat;
+                    codeEl.after(t);
+                }
+            }
+            if (colorTxt.trim()) color = colorTxt.trim();
+            const size = ((row.querySelector('.page-row-size') || {}).textContent || '').trim();
+            const rowQty = Number(((row.querySelector('.page-row-qty') || {}).textContent || '').trim()) || 0;
+            const k = keyOf(code, color, size);
+            (poByItem[k] || []).forEach((p) => allPOs.set(p.po, p));
+
+            const q = qty[k];
+            const box = row.querySelectorAll('.page-row-option')[col];
+            if (!box || !q || q.purchased <= 0 || box.querySelector('.gg-hand')) return;
+            const need = q.needed || rowQty;
+            const full = q.purchased >= need;
+            const m = document.createElement('span');
+            m.className = 'gg-hand ' + (full ? 'gg-check' : 'gg-check gg-part');
+            m.textContent = full ? '✓' : '✓ ' + q.purchased + '/' + need;
+            m.title = q.purchased + ' of ' + need + ' on a PO';
+            box.appendChild(m);
+            ticked++;
+        });
+
+        // One line in the blank space at the bottom of the page: "Ordered: SanMar #14541  ·  S&S Activewear #14651"
+        if (allPOs.size) {
+            const text = Array.from(allPOs.values()).map((p) => (p.vendor ? p.vendor + ' ' : '') + (p.ref ? '#' + p.ref : 'PO #' + p.po)).join('   ·   ');   // Vendor Ref, or PO # if a PO has none
+            const pages = Array.from(document.querySelectorAll('.page'));
+            const targets = PO_PAGE === 'all' ? pages : PO_PAGE === 'last' ? pages.slice(-1) : pages.slice(0, 1);
+            targets.forEach((page) => {
+                if (page.querySelector('.gg-po-line')) return;
+                if (getComputedStyle(page).position === 'static') page.style.position = 'relative';
+                const line = document.createElement('div');
+                line.className = 'gg-hand gg-po-line';
+                line.textContent = text;
+                page.appendChild(line);
+            });
+        }
+        LOG('ticked', ticked, 'rows;', allPOs.size, 'PO(s)');
+    }
+
+    (async function run() {
+        try {
+            const m = document.title.match(/#\s*(\d+)/);
+            if (!m) return LOG('no order number in title');
+            const orderId = await findOrderId(m[1]);
+            if (!orderId) return LOG('order not found for #' + m[1]);
+            mark(await loadData(orderId));
+        } catch (e) {
+            LOG('failed', e);
+        }
+    })();
+})();
+
+
+/* =====================================================================
+ * BOX LABEL (v.teesom.com): G&G layout, prints turned to fill a 4x6 sheet
+ * ===================================================================== */
+(function () {
+    'use strict';
+    if (location.hostname !== 'v.teesom.com' || !/^\/PrintSimpleBoxLabel\//i.test(location.pathname)) return;
+
+    // ---- Settings ----------------------------------------------------------
+    const SHEET_W_IN = 4;     // label sheet in the printer, portrait
+    const SHEET_H_IN = 6;
+    const CLOCKWISE = true;   // false = turn it the other way when printing
+    // -----------------------------------------------------------------------
+
+    function build() {
+        const src = document.getElementById('page');
+        if (!src || document.getElementById('gg-label')) return;
+        const txt = (sel) => ((src.querySelector(sel) || {}).textContent || '').trim();
+
+        // ---- Order info from Teesom's label ----
+        const orderNum = txt('#basic_info_1');
+        const orderDesc = txt('#basic_info_2');
+        const customer = txt('.body_info_content.body_info_larger');
+        const lines = Array.from(src.querySelectorAll('.basic_body_options_info_group_type_text .basic_body_options_info_title'))
+            .map((e) => e.textContent.trim()).filter(Boolean);
+        const logoSrc = (src.querySelector('#basic_img img') || {}).src || '';
+
+        // QR code: Teesom draws it as an <svg id="containercontent"> (or a canvas/img in older versions).
+        function qrCopy() {
+            const el = src.querySelector('#containercontent') || src.querySelector('#container svg, #container canvas, #container img');
+            if (!el) return null;
+            let node;
+            if (el.tagName.toLowerCase() === 'canvas') {
+                node = new Image();
+                try { node.src = el.toDataURL('image/png'); } catch (e) { return null; }
+            } else {
+                node = el.cloneNode(true);
+                if (node.tagName.toLowerCase() === 'svg' && !node.getAttribute('viewBox')) {
+                    const w = parseFloat(el.getAttribute('width')) || el.getBBox().width || 181;
+                    const h = parseFloat(el.getAttribute('height')) || el.getBBox().height || 181;
+                    node.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+                }
+                node.removeAttribute('id');
+                node.removeAttribute('style');
+                node.removeAttribute('width');
+                node.removeAttribute('height');
+            }
+            node.setAttribute('class', 'ggl-qr-img');
+            return node;
+        }
+
+        // ---- Styles (all under #gg-label, and !important where Stylebot could reach) ----
+        const W = SHEET_H_IN, H = SHEET_W_IN;   // drawn landscape: 6 wide x 4 tall
+        const css = document.createElement('style');
+        css.id = 'gg-box-label-style';
+        css.textContent = `
+          #page { display: none !important; }
+          #gg-label { box-sizing: border-box; width: ${W}in; height: ${H}in; margin: 0.6in auto; padding: 0.14in 0.16in;
+                      border: 1px solid #d3d3d3; background: #fff; color: #000; overflow: hidden;
+                      font-family: Arial, Helvetica, sans-serif; display: grid;
+                      grid-template-rows: 1.02in 0.74in 1fr; row-gap: 0.1in; }
+          #gg-label * { box-sizing: border-box; margin: 0; padding: 0; }
+
+          /* Row 1: logo | QR | order # */
+          #gg-label .ggl-top { display: grid; grid-template-columns: 2.25in 0.98in 1fr; align-items: center; column-gap: 0.12in;
+                               border-bottom: 1.5px solid #000; padding-bottom: 0.06in; }
+          #gg-label img.ggl-logo { position: static !important; left: auto !important; top: auto !important; transform: none !important;
+                                   display: block; max-width: 100%; max-height: 0.86in; object-fit: contain;
+                                   filter: brightness(60%) contrast(600%) grayscale(100%) !important; }
+          #gg-label .ggl-qr { width: 0.92in; height: 0.92in; }
+          #gg-label .ggl-qr-img { display: block; width: 100% !important; height: 100% !important; position: static !important; transform: none !important; }
+          #gg-label .ggl-num { text-align: right; line-height: 1; white-space: nowrap; overflow: hidden; }
+          #gg-label .ggl-num b { display: block; font-size: 46px; font-weight: 800; letter-spacing: -0.5px; }
+          #gg-label .ggl-num span { display: block; margin-top: 5px; font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+
+          /* Row 2: customer name bar */
+          #gg-label .ggl-name { background: #000; color: #fff; display: flex; align-items: center; padding: 0 0.14in;
+                                font-family: 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif; font-stretch: condensed;
+                                font-weight: 700; white-space: nowrap; overflow: hidden; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+          /* Row 3: BOX __ OF __ | write-on lines */
+          #gg-label .ggl-bottom { display: grid; grid-template-columns: 2.05in 1fr; column-gap: 0.3in; }
+          #gg-label .ggl-box { align-self: end; border: 2px solid #000; }
+          #gg-label .ggl-boxhead { background: #000; color: #fff; text-align: center; font-size: 15px; font-weight: 700; letter-spacing: 3px;
+                                   padding: 3px 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          #gg-label .ggl-boxrow { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; column-gap: 0.1in; padding: 0.1in; }
+          #gg-label .ggl-boxrow i { height: 0.5in; border: 1.5px solid #000; }
+          #gg-label .ggl-boxrow span { font-size: 15px; font-weight: 700; }
+          #gg-label .ggl-lines { display: flex; flex-direction: column; justify-content: space-evenly; }
+          #gg-label .ggl-line { border-bottom: 1.5px solid #000; height: 0.36in; display: flex; align-items: flex-end;
+                                font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding-bottom: 2px; }
+
+          @media print {
+            @page { size: ${SHEET_W_IN}in ${SHEET_H_IN}in; margin: 0; }
+            html, body { margin: 0 !important; padding: 0 !important; width: ${SHEET_W_IN}in !important; height: ${SHEET_H_IN}in !important; overflow: hidden !important; }
+            body > *:not(#gg-label) { display: none !important; }
+            #gg-label { position: absolute; top: 0; left: 0; margin: 0; border: 0; transform-origin: 0 0;
+                        transform: ${CLOCKWISE ? `translateX(${SHEET_W_IN}in) rotate(90deg)` : `translateY(${SHEET_H_IN}in) rotate(-90deg)`}; }
+          }`;
+        document.head.appendChild(css);
+
+        // ---- Label ----
+        const label = document.createElement('div');
+        label.id = 'gg-label';
+        label.innerHTML = `
+          <div class="ggl-top">
+            <div class="ggl-logo-wrap">${logoSrc ? '<img class="ggl-logo" alt="G&amp;G">' : ''}</div>
+            <div class="ggl-qr"></div>
+            <div class="ggl-num"><b></b><span></span></div>
+          </div>
+          <div class="ggl-name"></div>
+          <div class="ggl-bottom">
+            <div class="ggl-box">
+              <div class="ggl-boxhead">BOX</div>
+              <div class="ggl-boxrow"><i></i><span>OF</span><i></i></div>
+            </div>
+            <div class="ggl-lines"></div>
+          </div>`;
+        if (logoSrc) label.querySelector('.ggl-logo').src = logoSrc;
+        const qr = qrCopy();
+        if (qr) label.querySelector('.ggl-qr').appendChild(qr);
+        label.querySelector('.ggl-num b').textContent = orderNum;
+        label.querySelector('.ggl-num span').textContent = orderDesc;
+        label.querySelector('.ggl-name').textContent = customer;
+        const linesBox = label.querySelector('.ggl-lines');
+        (lines.length ? lines : ['Job', 'Decorations', 'Counted By']).forEach((t) => {
+            const d = document.createElement('div');
+            d.className = 'ggl-line';
+            d.textContent = t;
+            linesBox.appendChild(d);
+        });
+        src.parentNode.insertBefore(label, src);
+
+        // Long text: shrink until it fits (customer name bar and order number).
+        const fit = (el, start, min) => {
+            let size = start;
+            el.style.fontSize = size + 'px';
+            while (el.scrollWidth > el.clientWidth && size > min) { size -= 1; el.style.fontSize = size + 'px'; }
+        };
+        const fitAll = () => { fit(label.querySelector('.ggl-name'), 58, 18); fit(label.querySelector('.ggl-num b'), 46, 24); };
+        fitAll();
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitAll);
+    }
+
+    // The QR code is drawn by Teesom's page script; wait for it (up to ~3 s) before building.
+    let tries = 0;
+    (function wait() {
+        const ready = document.querySelector('#page #containercontent, #page #container svg, #page #container canvas');
+        if (ready || ++tries > 30) build(); else setTimeout(wait, 100);
     })();
 })();
