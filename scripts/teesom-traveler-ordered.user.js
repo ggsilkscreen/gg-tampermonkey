@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Teesom Traveler - Ordered Checkmarks + PO
 // @namespace    ggsilkscreen
-// @version      1.1.0
-// @description  On the printed shop traveler, ticks the "Ordered" box for every garment that's on a purchase order, and writes the vendor and PO # (e.g. "SanMar #14541") in the blank space at the bottom of the page, in a clear handwritten-style font.
+// @version      1.2.0
+// @description  On the printed shop traveler, ticks the "Ordered" box for every garment that's on a purchase order, and writes the vendor and PO # (e.g. "SanMar #14541") in the blank space at the bottom of the page, in a clear handwritten-style font. Also shows each style's catalog (e.g. SanMar) next to the style code.
 // @match        https://app.teesom.com/saiw/print/printordertraveler.aspx*
 // @grant        none
 // @run-at       document-idle
@@ -32,6 +32,7 @@
       .gg-hand{font-family:'Patrick Hand','Segoe Print','Bradley Hand',cursive;color:${INK};line-height:1}
       .gg-check{font-size:20px;display:flex;align-items:center;justify-content:center;height:100%}
       .gg-part{font-size:14px}
+      .gg-cat{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:3px;background:#163C5C;color:#fff;font:bold 10px Arial,sans-serif;vertical-align:middle;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .gg-po-line{position:absolute;left:0.5in;right:0.5in;bottom:${PO_BOTTOM_IN}in;font-size:20px;z-index:40}
       @media print{.gg-hand{color:${INK} !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}`;
     document.head.appendChild(css);
@@ -110,10 +111,20 @@
                 });
             } catch (e) { LOG('PO load failed', poid, e); }
         }
-        return { qty, poByItem };
+        // 4. Catalog name per style code, from the order's detail rows ("Catalog Used" tag)
+        const catalog = {};
+        try {
+            const html = await post('/saiw/adm_getdata.asp?q=oe_d_l_1', { ajxaction: 'getorderdetail', orderlink: orderId, screen_width: 1600, screen_height: 900 });
+            new DOMParser().parseFromString(html, 'text/html').querySelectorAll('p.lbllinestyle').forEach((p) => {
+                const tag = p.querySelector('[title="Catalog Used"]');
+                const code = (p.firstChild && p.firstChild.nodeType === 3 ? p.firstChild.nodeValue : '').trim();
+                if (tag && code && !catalog[norm(code)]) catalog[norm(code)] = tag.textContent.trim();
+            });
+        } catch (e) { LOG('catalog load failed', e); }
+        return { qty, poByItem, catalog };
     }
 
-    function mark({ qty, poByItem }) {
+    function mark({ qty, poByItem, catalog }) {
         // Which option column is "Ordered"?
         const headers = Array.from(document.querySelectorAll('.page-header .page-header-option-wrap'));
         let col = headers.findIndex((h) => /^\s*ordered\s*$/i.test(h.textContent));
@@ -125,7 +136,16 @@
             if (!row.classList.contains('page-job-item-row-type-products')) return;   // garments only
             const codeEl = row.querySelector('.page-row-code-style');
             const colorTxt = (row.querySelector('.page-row-color') || {}).textContent || '';
-            if (codeEl && codeEl.textContent.trim()) code = codeEl.textContent.trim();  // a new item starts
+            if (codeEl && codeEl.textContent.trim()) {                                    // a new item starts
+                code = codeEl.textContent.trim();
+                const cat = catalog[norm(code)];
+                if (cat && !row.querySelector('.gg-cat')) {
+                    const t = document.createElement('span');
+                    t.className = 'gg-cat';
+                    t.textContent = cat;
+                    codeEl.after(t);
+                }
+            }
             if (colorTxt.trim()) color = colorTxt.trim();
             const size = ((row.querySelector('.page-row-size') || {}).textContent || '').trim();
             const rowQty = Number(((row.querySelector('.page-row-qty') || {}).textContent || '').trim()) || 0;
