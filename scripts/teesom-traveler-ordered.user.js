@@ -167,7 +167,7 @@
 
         // One line in the blank space at the bottom of the page: "Ordered: SanMar #14541  ·  S&S Activewear #14651"
         if (allPOs.size) {
-            const text = 'Ordered: ' + Array.from(allPOs.values()).map((p) => (p.vendor ? p.vendor + ' ' : '') + (p.ref ? '#' + p.ref : 'PO #' + p.po))   // Vendor Ref, or PO # if a PO has none.join('   ·   ');
+            const text = 'Ordered: ' + Array.from(allPOs.values()).map((p) => (p.vendor ? p.vendor + ' ' : '') + (p.ref ? '#' + p.ref : 'PO #' + p.po)).join('   ·   ');   // Vendor Ref, or PO # if a PO has none
             const pages = Array.from(document.querySelectorAll('.page'));
             const targets = PO_PAGE === 'all' ? pages : PO_PAGE === 'last' ? pages.slice(-1) : pages.slice(0, 1);
             targets.forEach((page) => {
