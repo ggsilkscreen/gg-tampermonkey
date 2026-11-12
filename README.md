@@ -21,6 +21,7 @@ Teesom CRM add-ons for GG Silkscreen. Every script updates itself from this repo
 | Traveler - show row comments by default | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/teesom-traveler-row-comments.user.js) |
 | Traveler - invoice QR code | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/teesom-traveler-qr.user.js) |
 | Traveler / WO - Print for ESP button | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/teesom-print-for-esp.user.js) |
+| Box Label - G&G layout, prints turned on 4x6 (replaces Stylebot) | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/teesom-box-label-portrait.user.js) |
 | Chipply Improvements (Products list: edit pencil + Print List) | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/chipply-improvements.user.js) |
 | Chipply Look (Teesom colors, hides unused columns) | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/chipply-look.user.js) |
 
