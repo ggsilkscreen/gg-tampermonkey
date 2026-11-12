@@ -21,10 +21,11 @@ Teesom CRM add-ons for GG Silkscreen. Every script updates itself from this repo
 | Traveler - show row comments by default | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/teesom-traveler-row-comments.user.js) |
 | Traveler - invoice QR code | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/teesom-traveler-qr.user.js) |
 | Traveler / WO - Print for ESP button | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/teesom-print-for-esp.user.js) |
+| Reorder Portal (REORDER PORTAL by customer name, PUSH on each job, IMPORT REORDER on Order List) | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/teesom-reorder-portal.user.js) |
 | Chipply Improvements (Products list: edit pencil + Print List) | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/chipply-improvements.user.js) |
 | Chipply Look (Teesom colors, hides unused columns) | [Install](https://raw.githubusercontent.com/ggsilkscreen/gg-tampermonkey/main/scripts/chipply-look.user.js) |
 
-The Header buttons, Transfer stock and Traveler send-link scripts ask once for the GG API token. It is never stored in this repo.
+The Header buttons, Transfer stock and Traveler send-link scripts ask once for the GG API token. The Reorder Portal script asks once for the portal setup code (from the GG Reorder Portal Apps Script log). Neither is stored in this repo.
 
 ## Pushing an update
 1. Open the file in `scripts/`, click the pencil, make the change.
