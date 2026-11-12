@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Teesom Box Label - Print Portrait
 // @namespace    ggsilkscreen
-// @version      1.3.0
-// @description  On the Print Box Label page, turns the label 90 degrees when you print (Print button or Ctrl+P) and fits it on the 4x6 label. The screen view doesn't change.
+// @version      1.4.0
+// @description  On the Print Box Label page, turns the label 90 degrees when you print (Print button or Ctrl+P) so it runs down a portrait letter page at its normal size. The screen view doesn't change.
 // @match        https://v.teesom.com/PrintSimpleBoxLabel/*
 // @match        http://v.teesom.com/PrintSimpleBoxLabel/*
 // @grant        none
@@ -15,9 +15,9 @@
     'use strict';
 
     const CLOCKWISE = true;   // false = turn it the other way
-    const LABEL_W_IN = 4;     // label stock, portrait (Teesom's box label is a 4 x 6 inch layout)
-    const LABEL_H_IN = 6;
-    const MARGIN_IN = 0.1;    // small white edge so nothing touches the label edge
+    const LABEL_W_IN = 8.5;   // paper, portrait (letter)
+    const LABEL_H_IN = 11;
+    const MARGIN_IN = 0.25;   // white edge around the label
     const PX = 96;            // CSS pixels per inch
 
     const style = document.createElement('style');
@@ -31,7 +31,7 @@
         // Once turned, the label's width runs down the sheet and its height runs across. Shrink only if needed.
         const availW = (LABEL_W_IN - 2 * MARGIN_IN) * PX, availH = (LABEL_H_IN - 2 * MARGIN_IN) * PX;
         const k = Math.min(1, availW / h, availH / w);
-        const x = (LABEL_W_IN * PX - h * k) / 2, y = (LABEL_H_IN * PX - w * k) / 2;   // centered on the sheet
+        const x = (LABEL_W_IN * PX - h * k) / 2, y = MARGIN_IN * PX;   // centered left-right, at the top
         const turn = CLOCKWISE
             ? `translate(${x + h * k}px, ${y}px) rotate(90deg) scale(${k})`
             : `translate(${x}px, ${y + w * k}px) rotate(-90deg) scale(${k})`;
