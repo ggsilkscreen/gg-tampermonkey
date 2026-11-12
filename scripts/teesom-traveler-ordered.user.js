@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Teesom Traveler - Ordered Checkmarks + PO
 // @namespace    ggsilkscreen
-// @version      1.0.0
-// @description  On the printed shop traveler, ticks the "Ordered" box for every garment that's on a purchase order, and writes the PO # and Vendor Ref next to each item in a handwritten-style font.
+// @version      1.1.0
+// @description  On the printed shop traveler, ticks the "Ordered" box for every garment that's on a purchase order, and writes the vendor and PO # (e.g. "SanMar #14541") in the blank space at the bottom of the page, in a clear handwritten-style font.
 // @match        https://app.teesom.com/saiw/print/printordertraveler.aspx*
 // @grant        none
 // @run-at       document-idle
@@ -15,7 +15,8 @@
 
     // ---- Settings ----------------------------------------------------------
     const INK = '#1a3fa8';          // "pen" color for the handwriting (dark blue)
-    const SHOW_VENDOR_REF = true;   // also write the PO's Vendor Ref
+    const PO_PAGE = 'first';        // which page gets the PO line: 'first', 'last' or 'all'
+    const PO_BOTTOM_IN = 0.7;       // inches up from the bottom edge of the page
     // -----------------------------------------------------------------------
 
     const LOG = (...a) => console.log('[Traveler Ordered]', ...a);
@@ -23,15 +24,15 @@
     // Handwritten-style font (Caveat). Falls back to a cursive system font if it can't load.
     const font = document.createElement('link');
     font.rel = 'stylesheet';
-    font.href = 'https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&display=swap';
+    font.href = 'https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap';
     document.head.appendChild(font);
 
     const css = document.createElement('style');
     css.textContent = `
-      .gg-hand{font-family:'Caveat','Segoe Print','Bradley Hand',cursive;color:${INK};font-weight:700;line-height:1}
-      .gg-check{font-size:22px;display:flex;align-items:center;justify-content:center;height:100%}
-      .gg-part{font-size:15px}
-      .gg-po{font-size:17px;margin-left:10px;white-space:nowrap}
+      .gg-hand{font-family:'Patrick Hand','Segoe Print','Bradley Hand',cursive;color:${INK};line-height:1}
+      .gg-check{font-size:20px;display:flex;align-items:center;justify-content:center;height:100%}
+      .gg-part{font-size:14px}
+      .gg-po-line{position:absolute;left:0.5in;right:0.5in;bottom:${PO_BOTTOM_IN}in;font-size:20px;z-index:40}
       @media print{.gg-hand{color:${INK} !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}`;
     document.head.appendChild(css);
 
@@ -98,7 +99,7 @@
                     postJSON('/saiw/apc/purchasing/po_entry_load.ashx', { ajxaction: 'load-po-detail', poid }),
                 ]);
                 const pd = det.podetail || det;
-                const label = { po: pd.ponumber, ref: (pd.VendorRef || '').trim(), voided: !!pd.voided };
+                const label = { po: pd.ponumber, vendor: (pd.suppliername || '').trim(), voided: !!pd.voided };
                 if (label.voided || !label.po) continue;
                 ((items.itemdetail || {}).items || []).forEach((it) => {
                     const mine = (it.subItems || []).some((s) => s.orderid === orderId);
@@ -118,49 +119,47 @@
         let col = headers.findIndex((h) => /^\s*ordered\s*$/i.test(h.textContent));
         if (col < 0) col = 0;
 
-        let code = '', color = '', itemFirstRow = null, itemPOs = null;
-        const flushPO = () => {
-            if (!itemFirstRow || !itemPOs || !itemPOs.size) return;
-            const host = itemFirstRow.querySelector('.page-row-code');
-            if (!host || host.querySelector('.gg-po')) return;
-            const txt = Array.from(itemPOs.values()).map((p) => 'PO ' + p.po + (SHOW_VENDOR_REF && p.ref ? ' · Ref ' + p.ref : '')).join('  /  ');
-            const s = document.createElement('span');
-            s.className = 'gg-hand gg-po';
-            s.textContent = txt;
-            host.appendChild(s);
-        };
-
-        let ticked = 0;
+        let code = '', color = '', ticked = 0;
+        const allPOs = new Map();
         document.querySelectorAll('.page .page-row').forEach((row) => {
             if (!row.classList.contains('page-job-item-row-type-products')) return;   // garments only
             const codeEl = row.querySelector('.page-row-code-style');
             const colorTxt = (row.querySelector('.page-row-color') || {}).textContent || '';
-            if (codeEl && codeEl.textContent.trim()) {                 // a new item starts
-                flushPO();
-                code = codeEl.textContent.trim();
-                itemFirstRow = row;
-                itemPOs = new Map();
-            }
+            if (codeEl && codeEl.textContent.trim()) code = codeEl.textContent.trim();  // a new item starts
             if (colorTxt.trim()) color = colorTxt.trim();
             const size = ((row.querySelector('.page-row-size') || {}).textContent || '').trim();
             const rowQty = Number(((row.querySelector('.page-row-qty') || {}).textContent || '').trim()) || 0;
             const k = keyOf(code, color, size);
-
-            (poByItem[k] || []).forEach((p) => itemPOs && itemPOs.set(p.po, p));
+            (poByItem[k] || []).forEach((p) => allPOs.set(p.po, p));
 
             const q = qty[k];
             const box = row.querySelectorAll('.page-row-option')[col];
             if (!box || !q || q.purchased <= 0 || box.querySelector('.gg-hand')) return;
-            const full = q.purchased >= (q.needed || rowQty);
+            const need = q.needed || rowQty;
+            const full = q.purchased >= need;
             const m = document.createElement('span');
             m.className = 'gg-hand ' + (full ? 'gg-check' : 'gg-check gg-part');
-            m.textContent = full ? '✓' : '✓ ' + q.purchased + '/' + (q.needed || rowQty);
-            m.title = q.purchased + ' of ' + (q.needed || rowQty) + ' on a PO';
+            m.textContent = full ? '✓' : '✓ ' + q.purchased + '/' + need;
+            m.title = q.purchased + ' of ' + need + ' on a PO';
             box.appendChild(m);
             ticked++;
         });
-        flushPO();
-        LOG('ticked', ticked, 'rows');
+
+        // One line in the blank space at the bottom of the page: "Ordered: SanMar #14541  ·  S&S Activewear #14651"
+        if (allPOs.size) {
+            const text = 'Ordered: ' + Array.from(allPOs.values()).map((p) => (p.vendor ? p.vendor + ' ' : '') + '#' + p.po).join('   ·   ');
+            const pages = Array.from(document.querySelectorAll('.page'));
+            const targets = PO_PAGE === 'all' ? pages : PO_PAGE === 'last' ? pages.slice(-1) : pages.slice(0, 1);
+            targets.forEach((page) => {
+                if (page.querySelector('.gg-po-line')) return;
+                if (getComputedStyle(page).position === 'static') page.style.position = 'relative';
+                const line = document.createElement('div');
+                line.className = 'gg-hand gg-po-line';
+                line.textContent = text;
+                page.appendChild(line);
+            });
+        }
+        LOG('ticked', ticked, 'rows;', allPOs.size, 'PO(s)');
     }
 
     (async function run() {
