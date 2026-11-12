@@ -20,6 +20,7 @@
  *   Teesom IMPORT REORDER -> pending / markBuilt
  */
 
+var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbytwPDcB42GCqjr12NR8_2ilo-3lCZc5kk2NklHn4gUP8BLtlQfPjInHP2JTeoiN0JV/exec';   // the deployed /exec address (the editor only knows its /dev test address)
 var NOTIFY_EMAIL_DEFAULT = 'ross@ggsilkscreen.com';   // where new requests are emailed (change in Script Properties: NOTIFY_EMAIL)
 
 var TABS = {
@@ -64,7 +65,7 @@ function setup() {
 
 /** Run after deploying. The SETUP CODE is what Teesom asks for the first time a portal button is used. */
 function showSetupInfo() {
-  var url = ScriptApp.getService().getUrl() || '(not deployed yet - Deploy > New deployment > Web app, then run this again)';
+  var url = WEB_APP_URL || ScriptApp.getService().getUrl();
   var secret = props_().getProperty('API_SECRET');
   var code = Utilities.base64Encode(JSON.stringify({ url: url, secret: secret }));
   Logger.log('Web app URL: ' + url);
