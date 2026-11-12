@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Teesom Reorder Portal
 // @namespace    ggsilkscreen
-// @version      1.0.0
+// @version      1.1.0
 // @description  Customer reorder portal. On a saved order: a REORDER PORTAL button next to the customer name (their private reorder link) and a PUSH TO PORTAL button on each job (sends just that job's garments, sizes and art to their reorder page). On the Order List: IMPORT REORDER (builds a Teesom quote from a customer's request, linking existing art). Asks once per computer for the portal SETUP CODE.
 // @match        https://app.teesom.com/saiw/orderentry.asp*
 // @match        https://app.teesom.com/saiw/orderlist.asp*
@@ -131,6 +131,20 @@
         if (!c.compId || !c.name) throw new Error('Could not read the customer from this order.');
         return c;
     }
+    // The customer's contacts with phone and email (for the contact dropdown on their reorder page).
+    async function rpContacts(cust) {
+        try {
+            const html = await rpPost('adm_getdata.asp', { ajxaction: 'selectcustomercontact', srep: 'y', strs: cust.name });
+            const d = document.createElement('div'); d.innerHTML = html;
+            const list = [...d.querySelectorAll('[cmpid][ciname]')].filter((e) => e.getAttribute('cmpid') === cust.compId).map((e) => ({
+                contId: e.getAttribute('dbid'), name: (e.getAttribute('ciname') || '').trim(),
+                email: (e.getAttribute('myemal') || '').trim(), phone: (e.getAttribute('mycell') || e.getAttribute('cphone') || '').trim()
+            })).filter((c) => c.name);
+            // the order's contact first
+            list.sort((a, b) => (b.contId === cust.contId) - (a.contId === cust.contId));
+            return list;
+        } catch (e) { return []; }
+    }
     function rpOrderInfo() {
         const oid = new URLSearchParams(location.search).get('oid');
         const no = rpTxt(document.getElementById('ordernumber')).replace(/^#/, '');
@@ -175,9 +189,13 @@
                 g._last[sk] = { size: q.size, last: ((g._last[sk] || {}).last || 0) + (Number(q.qty) || 0) };
             } else {
                 const loose = Array.from(r.el.querySelectorAll('.label')).filter((x) => !x.getAttribute('title')).map(rpTxt);
+                const abs = (u) => { try { return u ? new URL(u, location.href).href : ''; } catch (e) { return ''; } };
+                const imgs = [];
+                [rpAttr(r.el.querySelector('[lgimg]'), 'lgimg')].concat(Array.from(r.el.querySelectorAll('[imgurl]')).map((x) => x.getAttribute('imgurl')))
+                    .map(abs).filter((u) => /^https?:/i.test(u) && !/\.svg(\?|$)/i.test(u)).forEach((u) => { if (!imgs.includes(u)) imgs.push(u); });
                 out.designs.push({
                     number: rpTxt(r.el.querySelector('a.btneditartact')) || q.code, name: rpTxt(r.el.querySelector('.lbllinedescription')),
-                    type: r.master || q.imprinttype || '', location: loose.find((t) => / - /.test(t)) || '', img: /^https?:/i.test(img) ? img : ''
+                    type: r.master || q.imprinttype || '', location: loose.find((t) => / - /.test(t)) || '', img: imgs[0] || '', imgs
                 });
             }
         }
@@ -210,6 +228,7 @@
         try {
             const cust = rpCustomer();
             ui.body.innerHTML = '<div>Customer: <b>' + rpEsc(cust.name) + '</b>' + (cust.contact ? ' (' + rpEsc(cust.contact) + ')' : '') + '</div><div style="margin-top:6px;color:#555;">Working...</div>';
+            cust.contacts = await rpContacts(cust);
             const r = await reorderApi('createPortal', { customer: cust });
             ui.body.innerHTML = '<div>Customer: <b>' + rpEsc(r.customer) + '</b></div><div style="margin-top:6px;">' +
                 (r.isNew ? 'Portal created.' : 'This customer already has a portal.') + ' Jobs on it: <b>' + r.jobs + '</b>' +
@@ -248,6 +267,7 @@
                     if (!d.designs.length) ui.log('  note: no artwork on this job');
                     d.designs.filter((x) => !x.img).forEach((x) => ui.log('  note: art ' + x.number + ' has no image'));
                     ui.log('Sending to the portal...');
+                    cust.contacts = await rpContacts(cust);
                     const r = await reorderApi('pushJobs', { customer: cust, order: { no: order.no, title: order.title }, jobs: [d] });
                     ui.log('\nDone. ' + (r.added ? 'Job added' : 'Job updated') + '. ' + r.customer + ' now has ' + r.jobs + ' job(s) on their page.' + (r.isNew ? ' (New portal created.)' : ''));
                     rpLinkBox(ui, r.link);
@@ -389,8 +409,13 @@
   async function linkImprint(orderid, jobid, compid, dn) {
     const html = await adm({ ajxaction: 'loadimprint', order_id: orderid, customer_id: compid, job_id: jobid, search_val: dn });
     const d = document.createElement('div'); d.innerHTML = html;
-    const hits = [...d.querySelectorAll('.imprint_select_body[dbid]')].filter(e => e.textContent.toUpperCase().includes(dn.toUpperCase()));
-    if (hits.length !== 1) return { ok: false, why: hits.length ? 'several imprints match ' + dn : 'design ' + dn + ' not found for this customer' };
+    // Exact match on the design number only (SCR-ABC-12 must not pick up its duplicate SCR-ABC-12-1).
+    const want = String(dn).trim().toUpperCase();
+    const hits = [...d.querySelectorAll('.imprint_select_body[dbid]')].filter(e => {
+      const code = e.querySelector('.imprint_select_code');
+      return code ? code.textContent.trim().toUpperCase() === want : false;
+    });
+    if (hits.length !== 1) return { ok: false, why: hits.length ? hits.length + ' imprints have the exact number ' + dn : 'design ' + dn + ' not found' };
     await adm({ ajxaction: 'addimptoord', basicinfostickyordernumber: orderid, orderentrycompanyname: compid, implfnj: jobid, inpatitmj: hits[0].getAttribute('dbid') });
     return { ok: true, dn };
   }
@@ -419,7 +444,6 @@
   // Teesom adds are set to $0 (no screen charges on reorders).
   // ================================================================
   const RE_SETUP = /^(DIGI|SCREEN|SCRN|SET ?UP|ART\b|ART -|INK|CUSTOM LOGO|THREAD|SHAVEOUT)/i;
-  const baseDesign = dn => String(dn).replace(/^([A-Z]{3}-[A-Z0-9]+-\d+)-\d+$/i, '$1');
 
   async function teesomOrderNo(orderid) {
     try {
@@ -459,7 +483,6 @@
       }
       for (const d of j.designs) {
         let l = await linkImprint(orderid, jobid, pick.compid, d.number);
-        if (!l.ok && baseDesign(d.number) !== d.number) l = await linkImprint(orderid, jobid, pick.compid, baseDesign(d.number));
         if (l.ok) log('  art ' + d.number + ' linked');
         else problems.push(j.name + ': art ' + d.number + ' not linked - ' + l.why + '. Link it by hand.');
       }
@@ -489,7 +512,7 @@
       catch (e) { msg.innerHTML = '<span class="bad">' + esc(e.message) + '</span>'; return; }
       if (!list.length) { msg.textContent = 'No reorder requests are waiting.'; return; }
       msg.innerHTML = '<table><tr><th>Customer</th><th>Pieces</th><th>Sent</th><th>Need by</th><th></th></tr>' +
-        list.map((r, i) => '<tr><td>' + esc(r.customer) + '<br><small>' + esc(r.request.name) + '</small></td><td>' + r.pieces + '</td><td>' +
+        list.map((r, i) => '<tr><td>' + (r.request.rush ? '<b class="bad">RUSH</b> ' : '') + esc(r.customer) + '<br><small>' + esc(r.request.name) + '</small></td><td>' + r.pieces + '</td><td>' +
           esc(new Date(r.submitted).toLocaleString()) + '</td><td>' + esc(r.neededBy || '-') + '</td><td><button data-i="' + i + '">Open</button></td></tr>').join('') + '</table>';
       msg.querySelectorAll('button[data-i]').forEach(b => b.onclick = () => { item = list[+b.dataset.i]; step2(); });
     };
@@ -500,7 +523,8 @@
       const rows = R.jobs.map(j => '<tr><td>' + esc(j.name) + '<br><small>#' + esc(j.orderNo) + ' &middot; ' + j.designs.map(d => esc(d.number)).join(', ') + '</small></td><td>' +
         j.items.map(it => esc(it.style + ' ' + it.color) + ': ' + it.sizes.map(s => esc(s[0]) + ' x' + s[1]).join(', ')).join('<br>') + '</td></tr>').join('');
       box.innerHTML = '<h3>' + esc(item.customer) + ' &nbsp;<small>' + esc(item.id) + '</small></h3>' +
-        '<div class="row">From <b>' + esc(R.name) + '</b> &lt;' + esc(R.email) + '&gt;' + (R.phone ? ' &middot; ' + esc(R.phone) : '') + '<br>' + item.pieces + ' pieces &middot; need by ' + esc(R.neededBy || 'not given') + '</div>' +
+        '<div class="row">From <b>' + esc(R.name) + '</b> &lt;' + esc(R.email) + '&gt;' + (R.phone ? ' &middot; ' + esc(R.phone) : '') + '<br>' + item.pieces + ' pieces &middot; need by ' + esc(R.neededBy || 'standard turnaround') + '</div>' +
+        (R.rush ? '<div class="row bad"><b>RUSH:</b> needed by ' + esc(R.neededBy) + ', before the standard 2-week turnaround (' + esc(R.standardDate || '') + ').</div>' : '') +
         (R.notes ? '<div class="row"><b>Customer notes:</b> ' + esc(R.notes) + '</div>' : '') +
         (done ? '<div class="row warn">Already built on ' + esc(done) + '. Building again makes a second order.</div>' : '') +
         '<table><tr><th>Job / art</th><th>Garments</th></tr>' + rows + '</table>' +
@@ -558,7 +582,7 @@
           if (r.problems.length) log('\nNEEDS A LOOK:\n - ' + r.problems.join('\n - '));
           else log('No problems reported.');
           log('Prices come from Teesom\'s price lists - check them before sending the quote.');
-          if (R.neededBy) log('Customer needs it by ' + R.neededBy + ' - set the due date.');
+          if (R.neededBy) log((R.rush ? 'RUSH - ' : '') + 'Customer needs it by ' + R.neededBy + ' - set the due date.');
           if (R.notes) log('Customer notes: ' + R.notes);
           log('Customer email: ' + R.email + (R.phone ? ' / ' + R.phone : ''));
           const a = document.createElement('a'); a.href = 'orderentry.asp?oid=' + r.orderid; a.textContent = 'Open the new order';

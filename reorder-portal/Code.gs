@@ -21,12 +21,14 @@
  */
 
 var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbytwPDcB42GCqjr12NR8_2ilo-3lCZc5kk2NklHn4gUP8BLtlQfPjInHP2JTeoiN0JV/exec';   // the deployed /exec address (the editor only knows its /dev test address)
+var TURNAROUND_DAYS = 14;   // standard turnaround after approval; a needed-by date before this is flagged RUSH
+var LOGO_URL = 'https://ggsilkscreen.com/wp-content/uploads/2020/05/website-logo-mobile-01.png';
 var NOTIFY_EMAIL_DEFAULT = 'ross@ggsilkscreen.com';   // where new requests are emailed (change in Script Properties: NOTIFY_EMAIL)
 
 var TABS = {
-  Customers: ['compId', 'token', 'name', 'code', 'contact', 'contId', 'rep', 'created', 'updated'],
+  Customers: ['compId', 'token', 'name', 'code', 'contact', 'contId', 'rep', 'created', 'updated', 'contacts'],
   Jobs: ['id', 'compId', 'orderNo', 'jobName', 'pushed', 'active', 'json'],
-  Requests: ['id', 'submitted', 'compId', 'customer', 'name', 'email', 'phone', 'neededBy', 'pieces', 'status', 'builtAt', 'teesomOrder', 'notes', 'json']
+  Requests: ['id', 'submitted', 'compId', 'customer', 'name', 'email', 'phone', 'neededBy', 'pieces', 'status', 'builtAt', 'teesomOrder', 'notes', 'json', 'rush']
 };
 
 function props_() { return PropertiesService.getScriptProperties(); }
@@ -133,7 +135,9 @@ function apiCreatePortal_(body) {
   var row = {
     compId: c.compId, token: have ? have.token : randomToken_(24), name: c.name, code: c.code || '',
     contact: c.contact || '', contId: c.contId || '', rep: c.rep || '',
-    created: have ? have.created : t, updated: t
+    created: have ? have.created : t, updated: t,
+    contacts: Array.isArray(c.contacts) && c.contacts.length ? JSON.stringify(c.contacts.slice(0, 40).map(function (k) { return { name: String(k.name || ''), email: String(k.email || ''), phone: String(k.phone || '') }; }))
+      : (have ? have.contacts : '')
   };
   if (body.newLink) row.token = randomToken_(24);
   put_('Customers', row, have ? have._row : null);
@@ -204,7 +208,10 @@ function getPortal(token) {
   var jobs = rows_('Jobs').filter(function (j) { return j.compId === c.compId && j.active !== 'no'; })
     .map(function (j) { var d = JSON.parse(j.json); return { id: pubId_(j.id), name: d.name, orderNo: d.orderNo, garments: d.garments, designs: d.designs, pushed: j.pushed }; })
     .sort(function (a, b) { return String(b.pushed).localeCompare(String(a.pushed)); });
-  return { ok: true, customer: c.name, contact: c.contact, jobs: jobs };
+  var contacts = []; try { contacts = c.contacts ? JSON.parse(c.contacts) : []; } catch (err) { contacts = []; }
+  if (!contacts.length && c.contact) contacts = [{ name: c.contact, email: '', phone: '' }];
+  return { ok: true, customer: c.name, code: c.code, contact: c.contact, contacts: contacts, jobs: jobs, logo: LOGO_URL,
+    turnaroundDays: TURNAROUND_DAYS, standardDate: standardDate_() };
 }
 
 /** form = { name, email, phone, neededBy, notes, lines:[{ jobId, style, color, sizes:[[size, qty]] }] } */
@@ -237,12 +244,19 @@ function submitReorder(token, form) {
     type: 'gg-reorder', version: 2, id: id, submitted: now_(), customer: c.name, customerCode: c.code,
     name: String(form.name).trim(), email: String(form.email).trim(), phone: String(form.phone || '').trim(),
     neededBy: String(form.neededBy || '').trim(), notes: String(form.notes || '').trim().slice(0, 2000),
-    pieces: pieces, jobs: list
+    pieces: pieces, jobs: list, standardDate: standardDate_()
   };
+  request.rush = !!(request.neededBy && /^\d{4}-\d{2}-\d{2}$/.test(request.neededBy) && request.neededBy < request.standardDate);
   put_('Requests', { id: id, submitted: request.submitted, compId: c.compId, customer: c.name, name: request.name, email: request.email,
-    phone: request.phone, neededBy: request.neededBy, pieces: pieces, status: 'New', builtAt: '', teesomOrder: '', notes: request.notes, json: JSON.stringify(request) });
+    phone: request.phone, neededBy: request.neededBy, pieces: pieces, status: 'New', builtAt: '', teesomOrder: '', notes: request.notes, json: JSON.stringify(request), rush: request.rush ? 'RUSH' : '' });
   try { notify_(request); } catch (err) { Logger.log('Email failed: ' + err); }
-  return { ok: true, id: id, pieces: pieces };
+  return { ok: true, id: id, pieces: pieces, rush: request.rush };
+}
+
+/** Today + the standard turnaround, as yyyy-MM-dd (shop time). */
+function standardDate_() {
+  var d = new Date(Date.now() + TURNAROUND_DAYS * 86400000);
+  return Utilities.formatDate(d, 'America/New_York', 'yyyy-MM-dd');
 }
 
 function esc_(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -250,10 +264,11 @@ function esc_(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function
 function notify_(r) {
   var to = props_().getProperty('NOTIFY_EMAIL') || NOTIFY_EMAIL_DEFAULT;
   var html = '<div style="font-family:Arial,sans-serif;color:#1b2733">' +
+    (r.rush ? '<div style="background:#c62828;color:#fff;font-weight:bold;padding:8px 12px;border-radius:6px;margin:0 0 10px">RUSH: needed by ' + esc_(r.neededBy) + ', before standard turnaround (' + esc_(r.standardDate) + ')</div>' : '') +
     '<h2 style="color:#163C5C;margin:0 0 4px">Reorder request: ' + esc_(r.customer) + '</h2>' +
     '<p style="margin:0 0 12px">' + r.pieces + ' pieces &middot; ' + esc_(r.id) + '</p>' +
     '<p style="margin:0 0 12px"><b>From:</b> ' + esc_(r.name) + ' &lt;' + esc_(r.email) + '&gt;' + (r.phone ? ' &middot; ' + esc_(r.phone) : '') +
-    '<br><b>Needed by:</b> ' + esc_(r.neededBy || 'not given') + (r.notes ? '<br><b>Notes:</b> ' + esc_(r.notes) : '') + '</p>';
+    '<br><b>Needed by:</b> ' + esc_(r.neededBy || 'standard turnaround') + (r.rush ? ' <b style="color:#c62828">(RUSH)</b>' : '') + (r.notes ? '<br><b>Notes:</b> ' + esc_(r.notes) : '') + '</p>';
   r.jobs.forEach(function (j) {
     html += '<div style="border:1px solid #d7dce1;border-radius:8px;padding:10px 12px;margin:0 0 10px">' +
       '<div style="font-weight:bold;color:#163C5C">' + esc_(j.name) + ' <span style="color:#55636f;font-weight:normal">(from order #' + esc_(j.orderNo) + ')</span></div>' +
@@ -265,7 +280,7 @@ function notify_(r) {
     html += '</div>';
   });
   html += '<p style="color:#55636f;font-size:13px">To build it: Teesom &gt; Order List &gt; IMPORT REORDER.</p></div>';
-  MailApp.sendEmail({ to: to, replyTo: r.email, subject: 'Reorder request - ' + r.customer + ' (' + r.pieces + ' pcs)', htmlBody: html, name: 'GG Reorder Portal' });
+  MailApp.sendEmail({ to: to, replyTo: r.email, subject: (r.rush ? 'RUSH ' : '') + 'Reorder request - ' + r.customer + ' (' + r.pieces + ' pcs)', htmlBody: html, name: 'GG Reorder Portal' });
 }
 
 if (typeof module !== 'undefined') module.exports = { doPost: doPost, doGet: doGet, getPortal: getPortal, submitReorder: submitReorder, setup: setup, showSetupInfo: showSetupInfo };
