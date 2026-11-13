@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Teesom Reorder Portal
 // @namespace    ggsilkscreen
-// @version      1.2.0
+// @version      1.2.1
 // @description  Customer reorder portal. On a saved order: a REORDER PORTAL button next to the customer name (their private reorder link) and an ADD TO PORTAL button on each job (sends just that job's garments, sizes and art to their reorder page). On the Order List: IMPORT REORDER (builds a Teesom quote from a customer's request, linking existing art). Asks once per computer for the portal SETUP CODE.
 // @match        https://app.teesom.com/saiw/orderentry.asp*
 // @match        https://app.teesom.com/saiw/orderlist.asp*
@@ -192,20 +192,11 @@
                 [rpAttr(r.el.querySelector('[lgimg]'), 'lgimg')].concat(Array.from(r.el.querySelectorAll('[imgurl]')).map((x) => x.getAttribute('imgurl')))
                     .map(abs).filter((u) => /^https?:/i.test(u) && !/\.svg(\?|$)/i.test(u)).forEach((u) => { if (!imgs.includes(u)) imgs.push(u); });
                 // Prefer the art's own Zoomed + Placement images (the ones tagged in the art window), not the quote image.
-                const artId = rpAttr(r.el.querySelector('[artid]'), 'artid');
-                if (artId && typeof unsafeWindow.APIBasicPost === 'function') {
-                    try {
-                        let res = await unsafeWindow.APIBasicPost('Art/Images/Load', { artId });
-                        if (typeof res === 'string') res = JSON.parse(res);
-                        const R = res && res.response;
-                        if (R && Array.isArray(R.images)) {
-                            const byLink = (id) => { const f = R.images.find((x) => x.link === id); return f ? abs(f.full_path) : ''; };
-                            let pick = [byLink(R.pinnedZoomed), byLink(R.pinnedPlacement)].filter(Boolean);
-                            if (!pick.length) pick = R.images.filter((x) => x.link !== R.pinnedQuote).map((x) => abs(x.full_path)).filter(Boolean).slice(0, 2);
-                            if (pick.length) imgs.splice(0, imgs.length, ...pick.filter((u, i) => pick.indexOf(u) === i));
-                        }
-                    } catch (e) { /* keep the images from the order row */ }
-                }
+                const dnum = rpTxt(r.el.querySelector('a.btneditartact')) || q.code;
+                const better = await rpArtImages(rpAttr(r.el.querySelector('[artid]'), 'artid'), dnum, abs);
+                if (better.length) imgs.splice(0, imgs.length, ...better);
+                // never send Teesom's "no image" placeholder
+                for (let k = imgs.length - 1; k >= 0; k--) if (/noimage/i.test(imgs[k])) imgs.splice(k, 1);
                 out.designs.push({
                     number: rpTxt(r.el.querySelector('a.btneditartact')) || q.code, name: rpTxt(r.el.querySelector('.lbllinedescription')),
                     type: r.master || q.imprinttype || '', location: loose.find((t) => / - /.test(t)) || '', img: imgs[0] || '', imgs
@@ -233,6 +224,43 @@
             delete g._last; delete g.master;
         }
         return out;
+    }
+
+    // Zoomed + Placement pictures for an art. Duplicated art (SCR-ABC-12-1) often keeps its pictures on the
+    // original (SCR-ABC-12), so if the copy has none, look at the original.
+    async function rpArtImages(artId, designNo, abs) {
+        const W = unsafeWindow;
+        if (typeof W.APIBasicPost !== 'function') return [];
+        const load = async (id) => {
+            try { let res = await W.APIBasicPost('Art/Images/Load', { artId: id }); if (typeof res === 'string') res = JSON.parse(res); return (res && res.response) || null; }
+            catch (e) { return null; }
+        };
+        const artIdFor = async (dn) => {
+            try {
+                const fd = new FormData(); fd.append('search_value', dn);
+                const j = await (await fetch('https://capi.teesom.com/GlobalSearch', { method: 'POST', body: fd, credentials: 'include' })).json();
+                const hit = (j.response || []).find((x) => x.type === 'Art' && String(x.title).toUpperCase() === String(dn).toUpperCase());
+                return hit ? hit.id : '';
+            } catch (e) { return ''; }
+        };
+        const pick = (R, pins) => {
+            if (!R || !Array.isArray(R.images) || !R.images.length) return [];
+            const url = (id) => { const f = id && R.images.find((x) => x.link === id); return f ? abs(f.full_path) : ''; };
+            let out = [url(pins.z) || abs(R.pinnedZoomedUrl || ''), url(pins.p) || abs(R.pinnedPlacementUrl || '')].filter(Boolean);
+            if (!out.length) out = R.images.filter((x) => x.link !== pins.q).map((x) => abs(x.full_path)).filter(Boolean).slice(0, 2);
+            return out.filter((u, i) => out.indexOf(u) === i && !/noimage/i.test(u));
+        };
+        const first = artId ? await load(artId) : null;
+        const pins = { z: first && first.pinnedZoomed, p: first && first.pinnedPlacement, q: first && first.pinnedQuote };
+        let got = pick(first, pins);
+        if (got.length < 2 && /-\d+$/.test(String(designNo)) && /^[A-Z]{3}-[A-Z0-9]+-\d+-\d+$/i.test(String(designNo))) {
+            const baseId = await artIdFor(String(designNo).replace(/-\d+$/, ''));
+            const base = baseId ? await load(baseId) : null;
+            const basePins = { z: (base && base.pinnedZoomed) || pins.z, p: (base && base.pinnedPlacement) || pins.p, q: (base && base.pinnedQuote) || pins.q };
+            const more = pick(base, basePins);
+            if (more.length > got.length) got = more;
+        }
+        return got;
     }
 
     // CREATE PORTAL: makes (or finds) the customer's portal and shows their link. Nothing in Teesom changes.
