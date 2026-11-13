@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Teesom Reorder Portal
 // @namespace    ggsilkscreen
-// @version      1.1.1
+// @version      1.2.0
 // @description  Customer reorder portal. On a saved order: a REORDER PORTAL button next to the customer name (their private reorder link) and an ADD TO PORTAL button on each job (sends just that job's garments, sizes and art to their reorder page). On the Order List: IMPORT REORDER (builds a Teesom quote from a customer's request, linking existing art). Asks once per computer for the portal SETUP CODE.
 // @match        https://app.teesom.com/saiw/orderentry.asp*
 // @match        https://app.teesom.com/saiw/orderlist.asp*
@@ -134,14 +134,12 @@
     // The customer's contacts with phone and email (for the contact dropdown on their reorder page).
     async function rpContacts(cust) {
         try {
-            const html = await rpPost('adm_getdata.asp', { ajxaction: 'selectcustomercontact', srep: 'y', strs: cust.name });
-            const d = document.createElement('div'); d.innerHTML = html;
-            const list = [...d.querySelectorAll('[cmpid][ciname]')].filter((e) => e.getAttribute('cmpid') === cust.compId).map((e) => ({
-                contId: e.getAttribute('dbid'), name: (e.getAttribute('ciname') || '').trim(),
-                email: (e.getAttribute('myemal') || '').trim(), phone: (e.getAttribute('mycell') || e.getAttribute('cphone') || '').trim()
-            })).filter((c) => c.name);
-            // the order's contact first
-            list.sort((a, b) => (b.contId === cust.contId) - (a.contId === cust.contId));
+            const raw = JSON.parse(await rpPost('adm_getdata.asp', { ajxaction: 'get_customer_contacts_json', cid: cust.compId }));
+            const list = (Array.isArray(raw) ? raw : []).map((c) => ({
+                contId: String(c.id || ''), name: String(c.name || '').trim(),
+                email: String(c.email || '').trim(), phone: String(c.cell || c.phone || '').trim()
+            })).filter((c) => c.name && !/@ggsilkscreen\.com$/i.test(c.email));   // leave out our own staff
+            list.sort((a, b) => (b.contId === cust.contId) - (a.contId === cust.contId));   // the order's contact first
             return list;
         } catch (e) { return []; }
     }
@@ -193,6 +191,21 @@
                 const imgs = [];
                 [rpAttr(r.el.querySelector('[lgimg]'), 'lgimg')].concat(Array.from(r.el.querySelectorAll('[imgurl]')).map((x) => x.getAttribute('imgurl')))
                     .map(abs).filter((u) => /^https?:/i.test(u) && !/\.svg(\?|$)/i.test(u)).forEach((u) => { if (!imgs.includes(u)) imgs.push(u); });
+                // Prefer the art's own Zoomed + Placement images (the ones tagged in the art window), not the quote image.
+                const artId = rpAttr(r.el.querySelector('[artid]'), 'artid');
+                if (artId && typeof unsafeWindow.APIBasicPost === 'function') {
+                    try {
+                        let res = await unsafeWindow.APIBasicPost('Art/Images/Load', { artId });
+                        if (typeof res === 'string') res = JSON.parse(res);
+                        const R = res && res.response;
+                        if (R && Array.isArray(R.images)) {
+                            const byLink = (id) => { const f = R.images.find((x) => x.link === id); return f ? abs(f.full_path) : ''; };
+                            let pick = [byLink(R.pinnedZoomed), byLink(R.pinnedPlacement)].filter(Boolean);
+                            if (!pick.length) pick = R.images.filter((x) => x.link !== R.pinnedQuote).map((x) => abs(x.full_path)).filter(Boolean).slice(0, 2);
+                            if (pick.length) imgs.splice(0, imgs.length, ...pick.filter((u, i) => pick.indexOf(u) === i));
+                        }
+                    } catch (e) { /* keep the images from the order row */ }
+                }
                 out.designs.push({
                     number: rpTxt(r.el.querySelector('a.btneditartact')) || q.code, name: rpTxt(r.el.querySelector('.lbllinedescription')),
                     type: r.master || q.imprinttype || '', location: loose.find((t) => / - /.test(t)) || '', img: imgs[0] || '', imgs

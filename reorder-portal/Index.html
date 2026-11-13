@@ -11,9 +11,9 @@
   body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 Arial, Helvetica, sans-serif; }
   .wrap { max-width:1100px; margin:0 auto; padding:0 16px; }
   .top { background:#fff; border-bottom:1px solid var(--line); }
-  .top .wrap { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:62px; }
-  .top img.logo { height:46px; width:auto; display:block; }
-  .top .shop { text-align:right; font-size:12px; color:var(--muted); }
+  .top .wrap { position:relative; display:flex; align-items:center; justify-content:center; min-height:96px; }
+  .top img.logo { height:76px; width:auto; display:block; }
+  .top .shop { position:absolute; right:16px; top:50%; transform:translateY(-50%); text-align:right; font-size:12px; color:var(--muted); }
   .top .shop b { color:var(--navy); font-size:14px; }
   .cust { background:var(--navy); color:#fff; border-top:4px solid #990099; }
   .cust .wrap { display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-height:58px; }
@@ -76,10 +76,17 @@
   .note { color:var(--muted); font-size:13px; }
   .center { text-align:center; padding:50px 16px; }
   .done h2 { color:var(--green); }
-  #zoom { position:fixed; inset:0; background:rgba(0,0,0,.8); display:none; align-items:center; justify-content:center; z-index:50; cursor:zoom-out; padding:20px; }
+  #zoom { position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; align-items:center; justify-content:center; z-index:50; padding:20px 70px; }
   #zoom img { max-width:100%; max-height:100%; background:#fff; border-radius:4px; }
+  #zoom .zb { position:absolute; top:50%; transform:translateY(-50%); width:48px; height:48px; border:0; border-radius:50%; background:rgba(255,255,255,.9); color:var(--navy); font-size:28px; line-height:48px; cursor:pointer; }
+  #zoom .zb:hover { background:#fff; }
+  #zprev { left:12px; } #znext { right:12px; }
+  #zclose { position:absolute; top:12px; right:14px; border:0; background:none; color:#fff; font-size:34px; cursor:pointer; line-height:1; }
+  #zcount { position:absolute; bottom:14px; left:0; right:0; text-align:center; color:#fff; font-size:13px; }
+  @media (max-width:640px) { #zoom { padding:20px 12px; } #zoom .zb { width:40px; height:40px; line-height:40px; font-size:24px; } }
   @media (max-width:640px) {
-    .top img.logo { height:36px; }
+    .top img.logo { height:56px; }
+    .top .wrap { min-height:76px; }
     .top .shop { display:none; }
     .cust h1 { font-size:21px; }
     .cust .label { display:none; }
@@ -106,7 +113,7 @@
   <div class="count"><b id="pcs">0</b> pieces selected</div>
   <button class="primary" id="next" disabled>Review &amp; send</button>
 </div></div>
-<div id="zoom"><img alt="" referrerpolicy="no-referrer"></div>
+<div id="zoom"><img alt="" referrerpolicy="no-referrer"><button class="zb" id="zprev" aria-label="Previous image">&#8249;</button><button class="zb" id="znext" aria-label="Next image">&#8250;</button><button id="zclose" aria-label="Close">&times;</button><div id="zcount"></div></div>
 
 <script>
 var TOKEN = '';
@@ -115,8 +122,22 @@ function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function
 function $(id) { return document.getElementById(id); }
 var app = $('app');
 
-function zoom(src) { if (!src) return; var z = $('zoom'); z.querySelector('img').src = src; z.style.display = 'flex'; }
-$('zoom').onclick = function () { this.style.display = 'none'; };
+// Image viewer: click any picture, then use the arrows (or arrow keys / swipe) to go through every picture on the page.
+var ZLIST = [], ZI = 0;
+function zshow() { var z = $('zoom'); z.querySelector('img').src = ZLIST[ZI]; $('zcount').textContent = ZLIST.length > 1 ? (ZI + 1) + ' of ' + ZLIST.length : ''; $('zprev').style.display = $('znext').style.display = ZLIST.length > 1 ? '' : 'none'; }
+function zoom(src) {
+  if (!src) return;
+  ZLIST = []; document.querySelectorAll('#app [data-z]').forEach(function (e) { var u = e.getAttribute('data-z'); if (u && ZLIST.indexOf(u) < 0) ZLIST.push(u); });
+  ZI = Math.max(0, ZLIST.indexOf(src)); zshow(); $('zoom').style.display = 'flex';
+}
+function zstep(d) { if (ZLIST.length) { ZI = (ZI + d + ZLIST.length) % ZLIST.length; zshow(); } }
+function zclose() { $('zoom').style.display = 'none'; }
+$('zprev').onclick = function (e) { e.stopPropagation(); zstep(-1); };
+$('znext').onclick = function (e) { e.stopPropagation(); zstep(1); };
+$('zclose').onclick = function (e) { e.stopPropagation(); zclose(); };
+$('zoom').onclick = function (e) { if (e.target === this) zclose(); };
+document.addEventListener('keydown', function (e) { if ($('zoom').style.display !== 'flex') return; if (e.key === 'ArrowRight') zstep(1); else if (e.key === 'ArrowLeft') zstep(-1); else if (e.key === 'Escape') zclose(); });
+(function () { var x0 = null; var z = $('zoom'); z.addEventListener('touchstart', function (e) { x0 = e.touches[0].clientX; }, { passive: true }); z.addEventListener('touchend', function (e) { if (x0 == null) return; var dx = e.changedTouches[0].clientX - x0; if (Math.abs(dx) > 40) zstep(dx < 0 ? 1 : -1); x0 = null; }); })();
 
 function niceDate(iso) {
   if (!iso) return '';
@@ -154,7 +175,7 @@ function render() {
   if (!DATA.jobs.length) { app.innerHTML = '<div class="center">There is nothing set up for reorder yet. Please contact GG Silkscreen at (508) 830-1075.</div>'; return; }
   var h = '<p class="intro">Enter the quantity you need under each size, then press <b>Review &amp; send</b>. We\'ll confirm pricing and the due date with you before anything is printed.</p>';
   DATA.jobs.forEach(function (j, ji) {
-    h += '<section class="job"><div class="jobbar"><small>Job ' + (ji + 1) + '</small><b>' + esc(j.name) + '</b><span class="from">Last ordered on #' + esc(j.orderNo) + '</span></div>';
+    h += '<section class="job"><div class="jobbar"><b>' + esc(j.name) + '</b></div>';
     if (j.designs.length) {
       h += '<div class="art">' + j.designs.map(function (d) {
         var imgs = (d.imgs && d.imgs.length ? d.imgs : (d.img ? [d.img] : []));
