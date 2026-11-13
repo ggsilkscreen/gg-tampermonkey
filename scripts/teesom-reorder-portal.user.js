@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Teesom Reorder Portal
 // @namespace    ggsilkscreen
-// @version      1.1.0
-// @description  Customer reorder portal. On a saved order: a REORDER PORTAL button next to the customer name (their private reorder link) and a PUSH TO PORTAL button on each job (sends just that job's garments, sizes and art to their reorder page). On the Order List: IMPORT REORDER (builds a Teesom quote from a customer's request, linking existing art). Asks once per computer for the portal SETUP CODE.
+// @version      1.1.1
+// @description  Customer reorder portal. On a saved order: a REORDER PORTAL button next to the customer name (their private reorder link) and an ADD TO PORTAL button on each job (sends just that job's garments, sizes and art to their reorder page). On the Order List: IMPORT REORDER (builds a Teesom quote from a customer's request, linking existing art). Asks once per computer for the portal SETUP CODE.
 // @match        https://app.teesom.com/saiw/orderentry.asp*
 // @match        https://app.teesom.com/saiw/orderlist.asp*
 // @grant        GM_xmlhttpRequest
@@ -232,7 +232,7 @@
             const r = await reorderApi('createPortal', { customer: cust });
             ui.body.innerHTML = '<div>Customer: <b>' + rpEsc(r.customer) + '</b></div><div style="margin-top:6px;">' +
                 (r.isNew ? 'Portal created.' : 'This customer already has a portal.') + ' Jobs on it: <b>' + r.jobs + '</b>' +
-                (r.jobs ? '' : ' &middot; use the purple <b>PUSH</b> button on a job to add it.') + '</div>';
+                (r.jobs ? '' : ' &middot; use <b>ADD TO PORTAL</b> on a job to add it.') + '</div>';
             rpLinkBox(ui, r.link);
         } catch (err) {
             console.error('[Reorder Portal]', err);
@@ -597,30 +597,33 @@
     // ================= Buttons =================
     const btnCss = document.createElement('style');
     btnCss.textContent = `
-      .rp-pill{display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:2px 9px;border:0;border-radius:10px;background:#990099;color:#fff;font:bold 11px Arial,sans-serif;cursor:pointer;vertical-align:middle;line-height:16px}
-      .rp-pill:hover{background:#770077}
-      .rp-job{display:inline-flex;align-items:center;justify-content:center;margin:auto 6px;padding:3px 7px;border:1px solid rgba(255,255,255,.6);border-radius:3px;background:#990099;color:#fff;font:bold 10px Arial,sans-serif;cursor:pointer;white-space:nowrap;line-height:12px}
-      .rp-job:hover{background:#770077}
+      .rp-pill{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;display:inline-flex;align-items:center;padding:3px 12px;border:0;border-radius:10px;background:#cfe2f3;color:#0b3a63;font:bold 11px Arial,sans-serif;cursor:pointer;line-height:16px;white-space:nowrap}
+      .rp-pill:hover{background:#ffffff}
+      .rp-job{display:inline-flex;align-items:center;justify-content:center;margin:auto 8px auto 0;padding:3px 9px;border:0;border-radius:3px;background:#cfe2f3;color:#0b3a63;font:bold 10px Arial,sans-serif;cursor:pointer;white-space:nowrap;line-height:12px;align-self:center}
+      .rp-job:hover{background:#ffffff}
       @media print{.rp-pill,.rp-job,#tm-reorder-bar{display:none!important}}`;
     document.head.appendChild(btnCss);
 
     // Teesom redraws the customer bar and the job list after edits, so keep putting the buttons back.
     function rpInjectOrderButtons() {
         const name = document.getElementById('orderentrycompanyname');
-        if (name && name.parentElement && !name.parentElement.querySelector('.rp-pill')) {
+        // centered in the navy customer bar
+        const custBar = name && (name.closest('.row') || (name.parentElement && name.parentElement.parentElement));
+        if (custBar && !custBar.querySelector('.rp-pill')) {
             const b = document.createElement('button');
             b.type = 'button'; b.className = 'rp-pill'; b.textContent = 'REORDER PORTAL'; b.title = "Create / open this customer's reorder portal";
             b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); rpCreatePortal(); });
-            const after = name.parentElement.querySelector('.btneditcustomerabout') || document.getElementById('tag-orderentry-customer-account-number') || name;
-            after.insertAdjacentElement('afterend', b);
+            if (getComputedStyle(custBar).position === 'static') custBar.style.position = 'relative';
+            custBar.appendChild(b);
         }
         document.querySelectorAll('.jcwtblheaderrow_orderentry[dbid]').forEach((h) => {
-            const cell = h.querySelector(':scope > .jcwcol');
-            if (!cell || cell.querySelector('.rp-job')) return;
+            // right side of the job bar, just left of Teesom's (+) button
+            const cell = h.querySelector('.order-job-header') || h.querySelector(':scope > .jcwcol:last-child');
+            if (!cell || h.querySelector('.rp-job')) return;
             const b = document.createElement('button');
-            b.type = 'button'; b.className = 'rp-job'; b.textContent = 'PUSH'; b.title = 'Push this job to the customer\'s reorder portal';
+            b.type = 'button'; b.className = 'rp-job'; b.textContent = 'ADD TO PORTAL'; b.title = 'Add this job to the customer\'s reorder portal';
             b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); rpPushJob(h.getAttribute('dbid')); });
-            cell.appendChild(b);
+            cell.insertBefore(b, cell.firstChild);
         });
     }
 
