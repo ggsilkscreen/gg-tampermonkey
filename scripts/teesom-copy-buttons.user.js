@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Teesom Copy Buttons (Design Number + Email) V9.23
 // @namespace    https://app.teesom.com/
-// @version      1.3.1
-// @description  Copy icons for design numbers and emails, plus order-page helpers: customer balance next to the customer name, $0 garment cost alert, due date check before Convert to Invoice, Duplicate switches the new order to your name, traveler Ordered checkmarks + catalog tags + vendor/Vendor Ref line, and the G&G box label that prints turned on 4x6.
+// @version      1.4
+// @description  Copy icons for design numbers and emails, plus order-page helpers: customer balance next to the customer name, $0 garment cost alert, due date check before Convert to Invoice, Duplicate switches the new order to your name, traveler Ordered checkmarks + catalog tags + vendor/Vendor Ref line, the G&G box label that prints turned on 4x6, and automatic stock check on quotes (green check / red X by each quantity).
 // @author       Ross
 // @match        https://app.teesom.com/*
 // @match        https://v.teesom.com/PrintSimpleBoxLabel/*
@@ -816,4 +816,109 @@
         const ready = document.querySelector('#page #containercontent, #page #container svg, #page #container canvas');
         if (ready || ++tries > 30) build(); else setTimeout(wait, 100);
     })();
+})();
+
+// =====================================================================
+// AUTO STOCK CHECK (quotes) - turns on Teesom's own "Check Stock" when a
+// QUOTE opens, then shows a green check (enough stock) or a red X plus the
+// vendor's stock in red (not enough) to the left of each quantity.
+// - Teesom asks its own server (which has our vendor logins) for stock and
+//   re-checks by itself whenever the lines reload.
+// - Never changes quote data. Clicking the menu's "Check Stock" still turns
+//   it off for that page. Hover a check / X to see Teesom's note.
+// =====================================================================
+(function () {
+    'use strict';
+    if (!/\/saiw\/orderentry\.asp/i.test(location.pathname)) return;
+    const LOG = '[GG Stock]';
+
+    // ---------- Styling ----------
+    const style = document.createElement('style');
+    style.textContent = `
+      /* Hide Teesom's green/amber stock number when there IS enough stock */
+      #orderdetailcontainer .order-detail-stock:not(.order-detail-stock-issue) { display: none !important; }
+      /* Hide Teesom's red "0" on lines with no vendor to check (customer goods, etc.) */
+      #orderdetailcontainer .order-detail-stock.gg-stk-nodata { display: none !important; }
+      .gg-stk-mark { position: absolute; left: -12px; top: 8px; font: 700 18px/1 Arial, sans-serif; cursor: default; z-index: 2; user-select: none; }
+      .gg-stk-ok  { color: #2e9e3f; }
+      .gg-stk-bad { color: #e01b1b; }
+    `;
+    document.head.appendChild(style);
+
+    // ---------- Switch Teesom's Check Stock on (runs inside the page) ----------
+    // _Order_Data is a page-level variable Teesom doesn't put on window, so this
+    // small part has to run in the page itself rather than in Tampermonkey's sandbox.
+    function pageActivate() {
+        var activated = false; // only once per page load, so a manual "off" sticks
+        function isQuote() {
+            return Array.prototype.some.call(document.querySelectorAll('h4'), function (h) {
+                var own = Array.prototype.filter.call(h.childNodes, function (n) { return n.nodeType === 3; })
+                    .map(function (n) { return n.textContent.trim(); }).join('').trim();
+                return own === 'Quote' && h.offsetParent !== null && h.getBoundingClientRect().top < 150;
+            });
+        }
+        function tryActivate() {
+            if (activated) return;
+            var OD = (typeof _Order_Data !== 'undefined') ? _Order_Data : null; // eslint-disable-line no-undef
+            if (!OD || typeof window.load_order_entry_check_stock !== 'function') return; // page not ready
+            if (!document.querySelector('#orderdetailcontainer .order-detail-stock-item')) return; // no garment lines yet
+            if (!isQuote()) { activated = true; return; } // invoices etc.: leave alone
+            activated = true;
+            if (!OD.stock_check_active) {
+                try { OD.stock_check_active = true; window.load_order_entry_check_stock(); }
+                catch (e) { console.warn('[GG Stock] could not start stock check', e); }
+            }
+        }
+        var pending = null;
+        var obs = new MutationObserver(function () {
+            if (activated) { obs.disconnect(); return; }
+            if (pending) return;
+            pending = setTimeout(function () { pending = null; tryActivate(); }, 60);
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+        tryActivate();
+    }
+    try {
+        const s = document.createElement('script');
+        s.textContent = '(' + pageActivate.toString() + ')();';
+        (document.head || document.documentElement).appendChild(s);
+        s.remove();
+    } catch (e) { console.warn(LOG, 'could not inject stock check starter', e); }
+
+    // ---------- Draw the check / X marks ----------
+    function drawMarks() {
+        document.querySelectorAll('#orderdetailcontainer .order-detail-stock-item').forEach(item => {
+            const stk = item.querySelector(':scope > .order-detail-stock');
+            let mark = item.querySelector(':scope > .gg-stk-mark');
+            let kind = null, title = '';
+            if (stk) {
+                if (stk.getAttribute('stock_index') === '-1') {
+                    if (!stk.classList.contains('gg-stk-nodata')) stk.classList.add('gg-stk-nodata');
+                } else if (stk.classList.contains('order-detail-stock-issue')) {
+                    kind = 'bad';
+                    title = 'Not enough stock. Vendor has ' + stk.textContent.trim() + '.';
+                } else {
+                    kind = 'ok';
+                    title = (stk.getAttribute('title') || 'In stock') + ' (' + stk.textContent.trim() + ' available)';
+                }
+            }
+            if (!kind) { if (mark) mark.remove(); return; }
+            const cls = 'gg-stk-mark gg-stk-' + kind;
+            const text = kind === 'ok' ? '✔' : '✖'; // check / X
+            if (mark && mark.className === cls && mark.title === title) return; // already right; avoids redraw loops
+            if (!mark) { mark = document.createElement('span'); item.insertBefore(mark, item.firstChild); }
+            mark.className = cls;
+            mark.textContent = text;
+            mark.title = title;
+        });
+    }
+
+    // ---------- Watch for Teesom redrawing the lines ----------
+    let pending = null;
+    function onChange() {
+        if (pending) return;
+        pending = setTimeout(() => { pending = null; try { drawMarks(); } catch (e) { console.warn(LOG, e); } }, 60);
+    }
+    new MutationObserver(onChange).observe(document.body, { childList: true, subtree: true });
+    onChange();
 })();
