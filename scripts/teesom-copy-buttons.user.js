@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Teesom Copy Buttons (Design Number + Email) V9.23
 // @namespace    https://app.teesom.com/
-// @version      1.4
+// @version      1.4.1
 // @description  Copy icons for design numbers and emails, plus order-page helpers: customer balance next to the customer name, $0 garment cost alert, due date check before Convert to Invoice, Duplicate switches the new order to your name, traveler Ordered checkmarks + catalog tags + vendor/Vendor Ref line, the G&G box label that prints turned on 4x6, and automatic stock check on quotes (green check / red X by each quantity).
 // @author       Ross
 // @match        https://app.teesom.com/*
@@ -845,45 +845,29 @@
     `;
     document.head.appendChild(style);
 
-    // ---------- Switch Teesom's Check Stock on (runs inside the page) ----------
-    // _Order_Data is a page-level variable Teesom doesn't put on window, so this
-    // small part has to run in the page itself rather than in Tampermonkey's sandbox.
-    function pageActivate() {
-        var activated = false; // only once per page load, so a manual "off" sticks
-        function isQuote() {
-            return Array.prototype.some.call(document.querySelectorAll('h4'), function (h) {
-                var own = Array.prototype.filter.call(h.childNodes, function (n) { return n.nodeType === 3; })
-                    .map(function (n) { return n.textContent.trim(); }).join('').trim();
-                return own === 'Quote' && h.offsetParent !== null && h.getBoundingClientRect().top < 150;
-            });
-        }
-        function tryActivate() {
-            if (activated) return;
-            var OD = (typeof _Order_Data !== 'undefined') ? _Order_Data : null; // eslint-disable-line no-undef
-            if (!OD || typeof window.load_order_entry_check_stock !== 'function') return; // page not ready
-            if (!document.querySelector('#orderdetailcontainer .order-detail-stock-item')) return; // no garment lines yet
-            if (!isQuote()) { activated = true; return; } // invoices etc.: leave alone
-            activated = true;
-            if (!OD.stock_check_active) {
-                try { OD.stock_check_active = true; window.load_order_entry_check_stock(); }
-                catch (e) { console.warn('[GG Stock] could not start stock check', e); }
-            }
-        }
-        var pending = null;
-        var obs = new MutationObserver(function () {
-            if (activated) { obs.disconnect(); return; }
-            if (pending) return;
-            pending = setTimeout(function () { pending = null; tryActivate(); }, 60);
+    // ---------- Switch Teesom's Check Stock on ----------
+    // Clicks Teesom's own "Check Stock" menu item once per page load - exactly
+    // what you'd do by hand - but only on a quote, only once the garment lines
+    // have loaded, and only if stock isn't already showing (so a manual "off" sticks).
+    const W = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    let activated = false;
+    function isQuote() {
+        return [...document.querySelectorAll('h4')].some(h => {
+            const own = [...h.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join('').trim();
+            return own === 'Quote' && h.offsetParent !== null && h.getBoundingClientRect().top < 150;
         });
-        obs.observe(document.body, { childList: true, subtree: true });
-        tryActivate();
     }
-    try {
-        const s = document.createElement('script');
-        s.textContent = '(' + pageActivate.toString() + ')();';
-        (document.head || document.documentElement).appendChild(s);
-        s.remove();
-    } catch (e) { console.warn(LOG, 'could not inject stock check starter', e); }
+    function tryActivate() {
+        if (activated) return;
+        if (typeof W.load_order_entry_check_stock !== 'function') return;                    // page not ready
+        if (!document.querySelector('#orderdetailcontainer .order-detail-stock-item')) return; // no garment lines yet
+        const link = document.querySelector('li.mnuoeviewstock a');
+        if (!link) return;                                                                     // menu not built yet
+        activated = true;
+        if (!isQuote()) return;                                                                // invoices etc.: leave alone
+        if (document.querySelector('#orderdetailcontainer .order-detail-stock')) return;       // already on
+        try { link.click(); } catch (e) { console.warn(LOG, 'could not start stock check', e); }
+    }
 
     // ---------- Draw the check / X marks ----------
     function drawMarks() {
@@ -917,7 +901,7 @@
     let pending = null;
     function onChange() {
         if (pending) return;
-        pending = setTimeout(() => { pending = null; try { drawMarks(); } catch (e) { console.warn(LOG, e); } }, 60);
+        pending = setTimeout(() => { pending = null; try { tryActivate(); drawMarks(); } catch (e) { console.warn(LOG, e); } }, 60);
     }
     new MutationObserver(onChange).observe(document.body, { childList: true, subtree: true });
     onChange();
