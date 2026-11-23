@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Teesom Copy Buttons (Design Number + Email) V9.23
 // @namespace    https://app.teesom.com/
-// @version      1.4.1
-// @description  Copy icons for design numbers and emails, plus order-page helpers: customer balance next to the customer name, $0 garment cost alert, due date check before Convert to Invoice, Duplicate switches the new order to your name, traveler Ordered checkmarks + catalog tags + vendor/Vendor Ref line, the G&G box label that prints turned on 4x6, and automatic stock check on quotes (green check / red X by each quantity).
+// @version      1.5
+// @description  Copy icons for design numbers and emails, plus order-page helpers: customer balance next to the customer name, $0 garment cost alert, due date check before Convert to Invoice, Duplicate switches the new order to your name, traveler Ordered checkmarks + catalog tags + vendor/Vendor Ref line, the G&G box label that prints turned on 4x6, automatic stock check on quotes (green check / red X by each quantity), and drag-to-reorder lines with a 6-dot handle that saves instantly.
 // @author       Ross
 // @match        https://app.teesom.com/*
 // @match        https://v.teesom.com/PrintSimpleBoxLabel/*
@@ -905,4 +905,154 @@
     }
     new MutationObserver(onChange).observe(document.body, { childList: true, subtree: true });
     onChange();
+})();
+
+// =====================================================================
+// DRAG TO REORDER ROWS - a 6-dot handle at the left of every line on an
+// order/quote. Grab it, drag the line where you want it, let go: the new
+// order saves right away (the same save Teesom's "Edit Row Positions" uses,
+// so no Edit / Save steps). Rows only move within their own job.
+// =====================================================================
+(function () {
+    'use strict';
+    if (!/\/saiw\/orderentry\.asp/i.test(location.pathname)) return;
+    const LOG = '[GG Drag Rows]';
+    const W = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    const JOB_PREFIX = 'ordjobrowpa_';
+
+    const css = document.createElement('style');
+    css.textContent = `
+      .gg-drag { position: absolute; left: 2px; top: 50%; transform: translateY(-50%); width: 14px; height: 24px;
+                 display: flex; align-items: center; justify-content: center; cursor: grab; color: #A3ADB8;
+                 border-radius: 3px; z-index: 3; user-select: none; }
+      .gg-drag:hover { color: #163C5C; background: #E4EEF8; }
+      .order-detail-row:hover > .gg-drag { color: #5B6873; }
+      .gg-drag-active, .gg-drag-active * { cursor: grabbing !important; user-select: none !important; }
+      .gg-drag-src { opacity: .45; }
+      .gg-drag-line { position: absolute; left: 0; right: 0; height: 3px; background: #1D5A96; border-radius: 2px;
+                      pointer-events: none; z-index: 50; box-shadow: 0 0 0 2px rgba(29,90,150,.18); }
+      #gg-drag-toast { position: fixed; right: 16px; bottom: 16px; z-index: 99999; padding: 9px 14px; border-radius: 8px;
+                       color: #fff; font: 13px/1.4 Arial, sans-serif; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+    `;
+    document.head.appendChild(css);
+
+    const DOTS = '<svg width="10" height="16" viewBox="0 0 10 16" aria-hidden="true"><g fill="currentColor">' +
+        '<circle cx="2.5" cy="3" r="1.5"/><circle cx="7.5" cy="3" r="1.5"/><circle cx="2.5" cy="8" r="1.5"/>' +
+        '<circle cx="7.5" cy="8" r="1.5"/><circle cx="2.5" cy="13" r="1.5"/><circle cx="7.5" cy="13" r="1.5"/></g></svg>';
+
+    function toast(msg, isError) {
+        let t = document.getElementById('gg-drag-toast');
+        if (!t) { t = document.createElement('div'); t.id = 'gg-drag-toast'; document.body.appendChild(t); }
+        t.style.background = isError ? '#C0392B' : '#1F7A3A';
+        t.textContent = msg;
+        t.style.display = 'block';
+        clearTimeout(t._h);
+        t._h = setTimeout(() => { t.style.display = 'none'; }, isError ? 6000 : 1800);
+    }
+
+    // Teesom keeps the line id on the row or on its first column. (Our handle is added LAST so this stays true.)
+    const rowDbid = (row) => row.getAttribute('dbid') || (row.firstElementChild && row.firstElementChild.getAttribute('dbid')) || '';
+    const jobRows = (con) => [...con.children].filter(r => r.classList.contains('order-detail-row') && rowDbid(r));
+    const inTeesomSortMode = (con) => !!con.querySelector(':scope > .order-detail-row[origin_index]');
+
+    // ---------- Add a handle to every line ----------
+    function addHandles() {
+        document.querySelectorAll('#orderdetailcontainer [id^="' + JOB_PREFIX + '"]').forEach(con => {
+            const sortMode = inTeesomSortMode(con);
+            jobRows(con).forEach(row => {
+                let h = row.querySelector(':scope > .gg-drag');
+                if (sortMode) { if (h) h.remove(); return; }   // Teesom's own Edit Row Positions is open: stay out of its way
+                if (h) return;
+                h = document.createElement('span');
+                h.className = 'gg-drag';
+                h.title = 'Drag to move this line';
+                h.innerHTML = DOTS;
+                h.addEventListener('mousedown', startDrag);
+                row.appendChild(h); // last child: Teesom's own code reads the row's FIRST child for its id
+            });
+        });
+    }
+
+    // ---------- Dragging ----------
+    let drag = null; // { row, con, line, target, after }
+
+    function startDrag(e) {
+        if (e.button !== 0) return;
+        e.preventDefault(); e.stopPropagation();
+        const row = e.currentTarget.parentElement;
+        const con = row.parentElement;
+        if (!con || !con.id.startsWith(JOB_PREFIX) || jobRows(con).length < 2) return;
+        const line = document.createElement('div');
+        line.className = 'gg-drag-line';
+        line.style.display = 'none';
+        if (getComputedStyle(con).position === 'static') con.style.position = 'relative';
+        con.appendChild(line);
+        drag = { row, con, line, target: null, after: false, order: jobRows(con).map(rowDbid).join(',') };
+        row.classList.add('gg-drag-src');
+        document.documentElement.classList.add('gg-drag-active');
+        document.addEventListener('mousemove', onMove, true);
+        document.addEventListener('mouseup', endDrag, true);
+    }
+
+    function onMove(e) {
+        if (!drag) return;
+        e.preventDefault();
+        const rows = jobRows(drag.con);
+        // Nearest line in this job by vertical position (works even if the pointer drifts sideways).
+        let best = null;
+        for (const r of rows) {
+            const b = r.getBoundingClientRect();
+            if (e.clientY < b.top) { best = best || { r, after: false }; break; }
+            best = { r, after: e.clientY > b.top + b.height / 2 };
+            if (e.clientY <= b.bottom) break;
+        }
+        if (!best) return;
+        drag.target = best.r; drag.after = best.after;
+        const cb = drag.con.getBoundingClientRect(), tb = best.r.getBoundingClientRect();
+        drag.line.style.top = ((best.after ? tb.bottom : tb.top) - cb.top - 2) + 'px';
+        drag.line.style.display = 'block';
+        // Scroll the page when dragging near the top or bottom edge.
+        if (e.clientY < 60) window.scrollBy(0, -12); else if (e.clientY > window.innerHeight - 60) window.scrollBy(0, 12);
+    }
+
+    function endDrag() {
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup', endDrag, true);
+        document.documentElement.classList.remove('gg-drag-active');
+        if (!drag) return;
+        const { row, con, line, target, after, order } = drag;
+        drag = null;
+        line.remove();
+        row.classList.remove('gg-drag-src');
+        if (!target || target === row) return;
+        if (after) target.after(row); else target.before(row);
+        const ids = jobRows(con).map(rowDbid).join(',');
+        if (ids === order) return;                                   // dropped back where it was
+        save(con, ids);
+    }
+
+    // ---------- Save right away (Teesom's own "order-job-sort-set") ----------
+    function save(con, ids) {
+        const $ = W.jQuery;
+        const jobid = con.id.slice(JOB_PREFIX.length);
+        if (!$ || !W._orderid || !jobid) { toast('Could not save the new order - refresh and try again.', true); return; }
+        $.post('adm_getdata.asp', { ajxaction: 'order-job-sort-set', orderid: W._orderid, jobid: jobid, item_ids: ids })
+            .done((data) => {
+                let res = data;
+                try { if (typeof data === 'string') res = JSON.parse(data); } catch (e) { /* not JSON */ }
+                if (res && res.err) { console.warn(LOG, res); toast('Teesom did not save the new order: ' + res.err, true); reload(); }
+                else toast('Line order saved');
+            })
+            .fail((x) => { console.warn(LOG, x); toast('Save failed - putting the lines back.', true); reload(); });
+    }
+
+    function reload() { try { if (typeof W.getrecords === 'function') W.getrecords(); } catch (e) { /* ignore */ } }
+
+    // Teesom redraws the lines after most edits - keep the handles there.
+    let pending = null;
+    new MutationObserver(() => {
+        if (pending || drag) return;
+        pending = setTimeout(() => { pending = null; try { addHandles(); } catch (e) { console.warn(LOG, e); } }, 80);
+    }).observe(document.body, { childList: true, subtree: true });
+    addHandles();
 })();
