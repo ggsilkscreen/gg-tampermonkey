@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Teesom Buttons v9.23
 // @namespace    http://tampermonkey.net/
-// @version      4.7
+// @version      4.8
 // @description  Adds SHOP MANUAL, TEESOM MANUAL, TRANSFERS (shows DTF LOGIN when signed out of the transfers site), (on an open order) COMPLETE & PRINT, (on the Job Board) SEND JOBS and PRINT DUE SOON, (on the Order List) IMPORT CHIPPLY, and (on the Calendar) TIDY CALENDAR buttons to the top center of specific app.teesom.com pages, hides them from printed output if they ever appear anywhere else, and hides them while a popup/modal is genuinely visible so they don't render on top of it.
 // @author       You
 // @match        https://app.teesom.com/saiw/orderlist.asp*
@@ -665,7 +665,7 @@
         const sendJobsBtn = makeBlueActionButton('SEND JOBS', () => openJobBoardSendModal());
         if (SHOW_SEND_JOBS) bar.appendChild(sendJobsBtn);
         // ------------------------------------------------------------
-        // PRINT DUE SOON - Job Board only. Jobs due today + the next 2
+        // PRINT DUE SOON - Job Board only. Overdue jobs (own section at top) + jobs due today + the next 2
         // business days (by actual due date), flags anything not ready,
         // and opens a one-page print sheet.
         // ------------------------------------------------------------
@@ -698,16 +698,27 @@
             return stage.replace('Order is Ready for Production', 'Ready for Production').replace(/\s*-+>\s*/g, ' > ');
         }
 
+        // "MM/DD/YYYY" -> local midnight Date (null if it doesn't parse)
+        function dueParse(s) {
+            const m = (s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+            return m ? new Date(+m[3], +m[1] - 1, +m[2]) : null;
+        }
+
         function dueCollect(want) {
             const keys = want.map(w => w.key);
+            const today = new Date(); today.setHours(0, 0, 0, 0);
             const jobs = [];
             document.querySelectorAll('.jcwtsmjobrdrow').forEach(r => {
                 const x = r.querySelector('[title^="Due Date"]');
                 if (!x) return;
                 const due = x.getAttribute('title').replace('Due Date: ', '').trim();
-                if (!keys.includes(due)) return;
                 const sel = r.querySelector('select.inp-order-inv-stage-change');
                 const stage = sel ? dueClean(sel.options[sel.selectedIndex]?.text) : '';
+                // Overdue = due before today and not yet at (6) Order is Completed or later
+                const dueDate = dueParse(due);
+                const daysLate = dueDate && dueDate < today ? Math.round((today - dueDate) / 86400000) : 0;
+                const overdue = daysLate > 0 && dueStageNum(stage) < 6;
+                if (!overdue && !keys.includes(due)) return;
                 const rep = dueClean(r.querySelector('[title="Sales Rep"]')?.textContent); // NOT .row-j-contact
                 const job = {
                     num: dueClean(r.querySelector('.row-j-num')?.textContent),
@@ -728,6 +739,10 @@
                     const lowTxt = low.map(([k, v]) => k + ' ' + v + '%').join(', ');
                     reasons.push(n >= 4 ? dueShortStage(stage).replace(/^\(\d+\w?\)\s*/, '') + ' but ' + lowTxt : lowTxt);
                 }
+                job.overdue = overdue;
+                job.daysLate = daysLate;
+                job.dueTime = dueDate ? dueDate.getTime() : 0;
+                if (overdue) reasons.unshift(daysLate + (daysLate === 1 ? ' day' : ' days') + ' overdue');
                 job.check = reasons.length > 0;
                 job.reason = reasons.join('; ');
                 jobs.push(job);
@@ -738,10 +753,22 @@
         function dueBuildSheet(want, jobs) {
             const now = new Date();
             const dayLabel = (w, i) => (i === 0 ? 'TODAY - ' : '') + DUE_DOW[w.date.getDay()] + ' ' + (w.date.getMonth() + 1) + '/' + w.date.getDate();
-            const checks = jobs.filter(j => j.check);
+            const late = jobs.filter(j => j.overdue).sort((a, b) => a.dueTime - b.dueTime); // oldest first
+            const soon = jobs.filter(j => !j.overdue);
+            const checks = soon.filter(j => j.check);
             const title = 'GG Silkscreen: Jobs Due ' + dayLabel(want[0], 1) + ' - ' + dayLabel(want[want.length - 1], 1);
             const sub = 'By actual due date - Teesom Job Board, ' + now.toLocaleDateString() + ' ' +
-                now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ' - ' + jobs.length + ' jobs, ' + checks.length + ' need attention';
+                now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ' - ' +
+                (late.length ? late.length + ' overdue, ' : '') + soon.length + ' due soon, ' + checks.length + ' need attention';
+            // OVERDUE - its own section at the very top
+            let overdueHtml = '';
+            if (late.length) {
+                const ringCellO = v => '<td class="c' + (v !== '100' ? ' low' : '') + '">' + dueEsc(v) + '</td>';
+                overdueHtml = '<h3 class="od">OVERDUE (' + late.length + ')</h3><table class="od"><thead><tr><th>[ ]</th><th>Job</th><th>Due</th><th>Late</th><th>Customer / Description</th><th>Rep</th><th>Stage</th><th>Art</th><th>Ord</th><th>In</th></tr></thead><tbody>' +
+                    late.map(j => '<tr><td class="box"></td><td>' + dueEsc(j.num) + '</td><td>' + dueEsc(j.due.slice(0, 5)) + '</td><td class="chk">' + j.daysLate + 'd</td><td>' +
+                        dueEsc(j.cust + ' - ' + j.desc) + '</td><td>' + dueEsc(j.rep) + '</td><td>' + dueEsc(dueShortStage(j.stage)) + '</td>' +
+                        ringCellO(j.art) + ringCellO(j.ord) + ringCellO(j.gin) + '</tr>').join('') + '</tbody></table>';
+            }
             let flags = '';
             if (checks.length) {
                 flags = '<div class="flags"><b>NEEDS LOOKING INTO</b><ul>' + checks.map(j => {
@@ -752,7 +779,7 @@
             }
             const ringCell = v => '<td class="c' + (v !== '100' ? ' low' : '') + '">' + dueEsc(v) + '</td>';
             const days = want.map((w, i) => {
-                const rows = jobs.filter(j => j.due === w.key).sort((a, b) => b.check - a.check);
+                const rows = soon.filter(j => j.due === w.key).sort((a, b) => b.check - a.check);
                 const body = rows.length ? rows.map(j =>
                     '<tr><td class="box"></td><td>' + dueEsc(j.num) + '</td><td>' + dueEsc(j.cust + ' - ' + j.desc) + '</td><td>' + dueEsc(j.rep) +
                     '</td><td>' + dueEsc(dueShortStage(j.stage)) + '</td>' + ringCell(j.art) + ringCell(j.ord) + ringCell(j.gin) +
@@ -768,8 +795,9 @@
                 'th,td{border:1px solid #999;padding:2px 4px;text-align:left;vertical-align:middle}th{background:#e6e6e6}' +
                 'td.c{text-align:center;width:28px}td.low{background:#ffd9d9;font-weight:bold}td.box{width:14px}' +
                 'td.chk{color:#c80000;font-weight:bold}td.rdy{color:#008000;font-weight:bold}td.none{color:#777;font-style:italic}' +
+                'h3.od{color:#c80000;margin-top:4px}table.od{border:2px solid #c80000;margin-bottom:4px}table.od th{background:#ffd9d9}' +
                 '*{-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
-                '</style></head><body><h1>' + dueEsc(title) + '</h1><div class="sub">' + dueEsc(sub) + '</div>' + flags + days +
+                '</style></head><body><h1>' + dueEsc(title) + '</h1><div class="sub">' + dueEsc(sub) + '</div>' + overdueHtml + flags + days +
                 '</body></html>';
         }
 
@@ -789,7 +817,7 @@
 
         // Same shape as the other bar buttons, in red so it stands apart from SEND JOBS.
         const dueSoonBtn = makeActionButton('PRINT DUE SOON', runPrintDueSoon);
-        dueSoonBtn.title = 'Jobs due today + next 2 business days, with flags';
+        dueSoonBtn.title = 'Overdue jobs + jobs due today and the next 2 business days, with flags';
         dueSoonBtn.style.backgroundColor = '#c80000';
         dueSoonBtn.style.border = '1px solid #9a0000';
         dueSoonBtn.onmouseover = () => dueSoonBtn.style.backgroundColor = '#9a0000';
