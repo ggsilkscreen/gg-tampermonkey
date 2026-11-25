@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Teesom Buttons v9.23
 // @namespace    http://tampermonkey.net/
-// @version      4.8
+// @version      4.8.1
 // @description  Adds SHOP MANUAL, TEESOM MANUAL, TRANSFERS (shows DTF LOGIN when signed out of the transfers site), (on an open order) COMPLETE & PRINT, (on the Job Board) SEND JOBS and PRINT DUE SOON, (on the Order List) IMPORT CHIPPLY, and (on the Calendar) TIDY CALENDAR buttons to the top center of specific app.teesom.com pages, hides them from printed output if they ever appear anywhere else, and hides them while a popup/modal is genuinely visible so they don't render on top of it.
 // @author       You
 // @match        https://app.teesom.com/saiw/orderlist.asp*
@@ -795,9 +795,9 @@
                 'th,td{border:1px solid #999;padding:2px 4px;text-align:left;vertical-align:middle}th{background:#e6e6e6}' +
                 'td.c{text-align:center;width:28px}td.low{background:#ffd9d9;font-weight:bold}td.box{width:14px}' +
                 'td.chk{color:#c80000;font-weight:bold}td.rdy{color:#008000;font-weight:bold}td.none{color:#777;font-style:italic}' +
-                'h3.od{color:#c80000;margin-top:4px}table.od{border:2px solid #c80000;margin-bottom:4px}table.od th{background:#ffd9d9}' +
+                'h3.od{color:#c80000;margin-top:8px}table.od{border:2px solid #c80000;margin-bottom:4px}table.od th{background:#ffd9d9}' +
                 '*{-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
-                '</style></head><body><h1>' + dueEsc(title) + '</h1><div class="sub">' + dueEsc(sub) + '</div>' + overdueHtml + flags + days +
+                '</style></head><body><h1>' + dueEsc(title) + '</h1><div class="sub">' + dueEsc(sub) + '</div>' + flags + overdueHtml + days +
                 '</body></html>';
         }
 
